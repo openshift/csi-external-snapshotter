@@ -262,7 +262,7 @@ func (ctrl *csiSnapshotCommonController) checkandRemoveSnapshotFinalizersAndChec
 		}
 
 		if !inUse {
-			klog.V(5).Infof("checkandRemoveSnapshotFinalizersAndCheckandDeleteContent: Set VolumeSnapshotBeingDeleted annotation on the content [%s]", content.Name)
+			klog.V(5).Infof("checkandRemoveSnapshotFinalizersAndCheckandDeleteContent: Set VolumeSnapshotBeingDeleted annotation on the content")
 			ctrl.setAnnVolumeSnapshotBeingDeleted(content)
 
 			klog.V(5).Infof("checkandRemoveSnapshotFinalizersAndCheckandDeleteContent: Remove Finalizer for VolumeSnapshot[%s]", utils.SnapshotKey(snapshot))
@@ -1295,6 +1295,9 @@ func (ctrl *csiSnapshotCommonController) getSnapshotFromStore(snapshotName strin
 }
 
 func (ctrl *csiSnapshotCommonController) setAnnVolumeSnapshotBeingDeleted(content *crdv1.VolumeSnapshotContent) error {
+	if content == nil {
+		return nil
+	}
 	// Set AnnVolumeSnapshotBeingDeleted if it is not set yet
 	if !metav1.HasAnnotation(content.ObjectMeta, utils.AnnVolumeSnapshotBeingDeleted) {
 		klog.V(5).Infof("setAnnVolumeSnapshotBeingDeleted: set annotation [%s] on content [%s].", utils.AnnVolumeSnapshotBeingDeleted, content.Name)
