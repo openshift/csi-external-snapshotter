@@ -38,19 +38,16 @@ import (
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	"github.com/kubernetes-csi/csi-lib-utils/metrics"
 	csirpc "github.com/kubernetes-csi/csi-lib-utils/rpc"
-	controller "github.com/kubernetes-csi/external-snapshotter/pkg/sidecar-controller"
-	"github.com/kubernetes-csi/external-snapshotter/pkg/snapshotter"
+	controller "github.com/kubernetes-csi/external-snapshotter/v2/pkg/sidecar-controller"
+	"github.com/kubernetes-csi/external-snapshotter/v2/pkg/snapshotter"
 
-	clientset "github.com/kubernetes-csi/external-snapshotter/pkg/client/clientset/versioned"
-	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/pkg/client/clientset/versioned/scheme"
-	informers "github.com/kubernetes-csi/external-snapshotter/pkg/client/informers/externalversions"
+	clientset "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/clientset/versioned"
+	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/clientset/versioned/scheme"
+	informers "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/informers/externalversions"
 	coreinformers "k8s.io/client-go/informers"
 )
 
 const (
-	// Number of worker threads
-	threads = 10
-
 	// Default timeout of short CSI calls like GetPluginInfo
 	defaultCSITimeout = time.Minute
 )
@@ -63,6 +60,7 @@ var (
 	snapshotNamePrefix     = flag.String("snapshot-name-prefix", "snapshot", "Prefix to apply to the name of a created snapshot")
 	snapshotNameUUIDLength = flag.Int("snapshot-name-uuid-length", -1, "Length in characters for the generated uuid of a created snapshot. Defaults behavior is to NOT truncate.")
 	showVersion            = flag.Bool("version", false, "Show version.")
+	threads                = flag.Int("worker-threads", 10, "Number of worker threads.")
 	csiTimeout             = flag.Duration("timeout", defaultCSITimeout, "The timeout for any RPCs to the CSI driver. Default is 1 minute.")
 
 	leaderElection          = flag.Bool("leader-election", false, "Enables leader election.")
@@ -182,7 +180,7 @@ func main() {
 		stopCh := make(chan struct{})
 		factory.Start(stopCh)
 		coreFactory.Start(stopCh)
-		go ctrl.Run(threads, stopCh)
+		go ctrl.Run(*threads, stopCh)
 
 		// ...until SIGINT
 		c := make(chan os.Signal, 1)
