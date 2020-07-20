@@ -15,7 +15,7 @@ The move of the Kubernetes Volume Snapshot feature to beta also means:
 * A revamp of volume snapshot APIs.
 * The CSI external-snapshotter sidecar is split into two controllers, a snapshot controller and a CSI external-snapshotter sidecar.
 
-The snapshot controller is deployed by the Kubernetes distributions and is responsible for watching the VolumeSnapshot CRD objects and manges the creation and deletion lifecycle of snapshots.
+The snapshot controller is deployed by the Kubernetes distributions and is responsible for watching the VolumeSnapshot CRD objects and manages the creation and deletion lifecycle of snapshots.
 
 The CSI external-snapshotter sidecar watches Kubernetes VolumeSnapshotContent CRD objects and triggers CreateSnapshot/DeleteSnapshot against a CSI endpoint.
 
@@ -26,7 +26,7 @@ Blog post for the beta feature can be found [here](https://kubernetes.io/blog/20
 
 This information reflects the head of this branch.
 
-| Compatible with CSI Version                                                                | Container Image             | Min K8s Version | Snapshot CRD version |
+| Compatible with CSI Version                                                                | Container Image             | [Min K8s Version](https://kubernetes-csi.github.io/docs/kubernetes-compatibility.html#minimum-version) | Snapshot CRD version |
 | ------------------------------------------------------------------------------------------ | ----------------------------| --------------- | -------------------- |
 | [CSI Spec v1.0.0](https://github.com/container-storage-interface/spec/releases/tag/v1.0.0) | quay.io/k8scsi/csi-snapshotter | 1.17         | v1beta1              |
 | [CSI Spec v1.0.0](https://github.com/container-storage-interface/spec/releases/tag/v1.0.0) | quay.io/k8scsi/snapshot-controller | 1.17     | v1beta1              |
@@ -60,7 +60,7 @@ The Volume Snapshot feature now depends on a new, volume snapshot controller in 
 
 Therefore, it is strongly recommended that Kubernetes distributors bundle and deploy the controller and CRDs as part of their Kubernetes cluster management process (independent of any CSI Driver).
 
-If your cluster does not come pre-installed with the correct components, you may manually install these components by executing the following steps.
+If your Kubernetes distribution does not bundle the snapshot controller, you may manually install these components by executing the following steps. Note that the snapshot controller YAML files in the git repository deploy into the default namespace for system testing purposes. For general use, update the snapshot controller YAMLs with an appropriate namespace prior to installing. For example, on a Vanilla Kubernetes cluster update the namespace from 'default' to 'kube-system' prior to issuing the kubectl create command.
 
 Install Snapshot Beta CRDs:
 * kubectl create -f config/crd
@@ -68,6 +68,7 @@ Install Snapshot Beta CRDs:
 * Do this once per cluster
 
 Install Common Snapshot Controller:
+* Update the namespace to an appropriate value for your environment (e.g. kube-system)
 * kubectl create -f deploy/kubernetes/snapshot-controller
 * https://github.com/kubernetes-csi/external-snapshotter/tree/master/deploy/kubernetes/snapshot-controller
 * Do this once per cluster

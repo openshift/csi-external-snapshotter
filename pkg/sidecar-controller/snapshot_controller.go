@@ -17,6 +17,7 @@ limitations under the License.
 package sidecar_controller
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -26,10 +27,9 @@ import (
 	codes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/util/goroutinemap"
-	"k8s.io/kubernetes/pkg/util/goroutinemap/exponentialbackoff"
 	"k8s.io/kubernetes/pkg/util/slice"
 )
 
@@ -66,62 +66,32 @@ func (ctrl *csiSnapshotSideCarController) syncContent(content *crdv1.VolumeSnaps
 			// update content SnapshotHandle to nil upon a successful deletion. At this
 			// point, the finalizer on content should NOT be removed to avoid leaking.
 			return ctrl.deleteCSISnapshot(content)
-		} else {
-			// otherwise, either the snapshot has been deleted from the underlying
-			// storage system, or the deletion policy is Retain, remove the finalizer
-			// if there is one so that API server could delete the object if there is
-			// no other finalizer.
-			return ctrl.removeContentFinalizer(content)
 		}
-	} else {
-		if content.Spec.Source.VolumeHandle != nil && content.Status == nil {
-			klog.V(5).Infof("syncContent: Call CreateSnapshot for content %s", content.Name)
-			ctrl.createSnapshot(content)
-		} else {
-			// Skip checkandUpdateContentStatus() if ReadyToUse is
-			// already true. We don't want to keep calling CreateSnapshot
-			// or ListSnapshots CSI methods over and over again for
-			// performance reasons.
-			if content.Status != nil && content.Status.ReadyToUse != nil && *content.Status.ReadyToUse == true {
-				// Try to remove AnnVolumeSnapshotBeingCreated if it is not removed yet for some reason
-				err := ctrl.removeAnnVolumeSnapshotBeingCreated(content)
-				if err != nil {
-					return fmt.Errorf("failed to remove VolumeSnapshotBeingCreated annotation from the content %s: %q", content.Name, err)
-				}
-				return nil
-			}
-			ctrl.checkandUpdateContentStatus(content)
-		}
+		// otherwise, either the snapshot has been deleted from the underlying
+		// storage system, or the deletion policy is Retain, remove the finalizer
+		// if there is one so that API server could delete the object if there is
+		// no other finalizer.
+		return ctrl.removeContentFinalizer(content)
 	}
-	return nil
+	if content.Spec.Source.VolumeHandle != nil && content.Status == nil {
+		klog.V(5).Infof("syncContent: Call CreateSnapshot for content %s", content.Name)
+		return ctrl.createSnapshot(content)
+	}
+	// Skip checkandUpdateContentStatus() if ReadyToUse is
+	// already true. We don't want to keep calling CreateSnapshot
+	// or ListSnapshots CSI methods over and over again for
+	// performance reasons.
+	if content.Status != nil && content.Status.ReadyToUse != nil && *content.Status.ReadyToUse == true {
+		// Try to remove AnnVolumeSnapshotBeingCreated if it is not removed yet for some reason
+		return ctrl.removeAnnVolumeSnapshotBeingCreated(content)
+	}
+	return ctrl.checkandUpdateContentStatus(content)
 }
 
 // deleteCSISnapshot starts delete action.
 func (ctrl *csiSnapshotSideCarController) deleteCSISnapshot(content *crdv1.VolumeSnapshotContent) error {
-	operationName := fmt.Sprintf("delete-%s", content.Name)
-	klog.V(5).Infof("schedule to delete snapshot, operation named %s", operationName)
-	ctrl.scheduleOperation(operationName, func() error {
-		return ctrl.deleteCSISnapshotOperation(content)
-	})
-	return nil
-}
-
-// scheduleOperation starts given asynchronous operation on given snapshot. It
-// makes sure there is no running operation with the same operationName
-func (ctrl *csiSnapshotSideCarController) scheduleOperation(operationName string, operation func() error) {
-	klog.V(5).Infof("scheduleOperation[%s]", operationName)
-
-	err := ctrl.runningOperations.Run(operationName, operation)
-	if err != nil {
-		switch {
-		case goroutinemap.IsAlreadyExists(err):
-			klog.V(4).Infof("operation %q is already running, skipping", operationName)
-		case exponentialbackoff.IsExponentialBackoff(err):
-			klog.V(4).Infof("operation %q postponed due to exponential backoff", operationName)
-		default:
-			klog.Errorf("error scheduling operation %q: %v", operationName, err)
-		}
-	}
+	klog.V(5).Infof("Deleting snapshot for content: %s", content.Name)
+	return ctrl.deleteCSISnapshotOperation(content)
 }
 
 func (ctrl *csiSnapshotSideCarController) storeContentUpdate(content interface{}) (bool, error) {
@@ -129,44 +99,38 @@ func (ctrl *csiSnapshotSideCarController) storeContentUpdate(content interface{}
 }
 
 // createSnapshot starts new asynchronous operation to create snapshot
-func (ctrl *csiSnapshotSideCarController) createSnapshot(content *crdv1.VolumeSnapshotContent) {
+func (ctrl *csiSnapshotSideCarController) createSnapshot(content *crdv1.VolumeSnapshotContent) error {
 	klog.V(5).Infof("createSnapshot for content [%s]: started", content.Name)
-	opName := fmt.Sprintf("create-%s", content.Name)
-	ctrl.scheduleOperation(opName, func() error {
-		contentObj, err := ctrl.createSnapshotWrapper(content)
-		if err != nil {
-			ctrl.updateContentErrorStatusWithEvent(content, v1.EventTypeWarning, "SnapshotCreationFailed", fmt.Sprintf("Failed to create snapshot: %v", err))
-			klog.Errorf("createSnapshot [%s]: error occurred in createSnapshotWrapper: %v", opName, err)
-			return err
-		}
+	contentObj, err := ctrl.createSnapshotWrapper(content)
+	if err != nil {
+		ctrl.updateContentErrorStatusWithEvent(content, v1.EventTypeWarning, "SnapshotCreationFailed", fmt.Sprintf("Failed to create snapshot: %v", err))
+		klog.Errorf("createSnapshot for content [%s]: error occurred in createSnapshotWrapper: %v", content.Name, err)
+		return err
+	}
 
-		_, updateErr := ctrl.storeContentUpdate(contentObj)
-		if updateErr != nil {
-			// We will get an "snapshot update" event soon, this is not a big error
-			klog.V(4).Infof("createSnapshot [%s]: cannot update internal content cache: %v", content.Name, updateErr)
-		}
-		return nil
-	})
+	_, updateErr := ctrl.storeContentUpdate(contentObj)
+	if updateErr != nil {
+		// We will get an "snapshot update" event soon, this is not a big error
+		klog.V(4).Infof("createSnapshot for content [%s]: cannot update internal content cache: %v", content.Name, updateErr)
+	}
+	return nil
 }
 
-func (ctrl *csiSnapshotSideCarController) checkandUpdateContentStatus(content *crdv1.VolumeSnapshotContent) {
+func (ctrl *csiSnapshotSideCarController) checkandUpdateContentStatus(content *crdv1.VolumeSnapshotContent) error {
 	klog.V(5).Infof("checkandUpdateContentStatus[%s] started", content.Name)
-	opName := fmt.Sprintf("check-%s", content.Name)
-	ctrl.scheduleOperation(opName, func() error {
-		contentObj, err := ctrl.checkandUpdateContentStatusOperation(content)
-		if err != nil {
-			ctrl.updateContentErrorStatusWithEvent(content, v1.EventTypeWarning, "SnapshotContentCheckandUpdateFailed", fmt.Sprintf("Failed to check and update snapshot content: %v", err))
-			klog.Errorf("checkandUpdateContentStatus [%s]: error occurred %v", content.Name, err)
-			return err
-		}
-		_, updateErr := ctrl.storeContentUpdate(contentObj)
-		if updateErr != nil {
-			// We will get an "snapshot update" event soon, this is not a big error
-			klog.V(4).Infof("checkandUpdateContentStatus [%s]: cannot update internal cache: %v", content.Name, updateErr)
-		}
+	contentObj, err := ctrl.checkandUpdateContentStatusOperation(content)
+	if err != nil {
+		ctrl.updateContentErrorStatusWithEvent(content, v1.EventTypeWarning, "SnapshotContentCheckandUpdateFailed", fmt.Sprintf("Failed to check and update snapshot content: %v", err))
+		klog.Errorf("checkandUpdateContentStatus [%s]: error occurred %v", content.Name, err)
+		return err
+	}
+	_, updateErr := ctrl.storeContentUpdate(contentObj)
+	if updateErr != nil {
+		// We will get an "snapshot update" event soon, this is not a big error
+		klog.V(4).Infof("checkandUpdateContentStatus [%s]: cannot update internal cache: %v", content.Name, updateErr)
+	}
 
-		return nil
-	})
+	return nil
 }
 
 // updateContentStatusWithEvent saves new content.Status to API server and emits
@@ -194,7 +158,7 @@ func (ctrl *csiSnapshotSideCarController) updateContentErrorStatusWithEvent(cont
 	}
 	ready := false
 	contentClone.Status.ReadyToUse = &ready
-	newContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().UpdateStatus(contentClone)
+	newContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().UpdateStatus(context.TODO(), contentClone, metav1.UpdateOptions{})
 
 	if err != nil {
 		klog.V(4).Infof("updating VolumeSnapshotContent[%s] error status failed %v", content.Name, err)
@@ -295,9 +259,9 @@ func (ctrl *csiSnapshotSideCarController) checkandUpdateContentStatusOperation(c
 			return nil, err
 		}
 		return updatedContent, nil
-	} else {
-		return ctrl.createSnapshotWrapper(content)
 	}
+	return ctrl.createSnapshotWrapper(content)
+
 }
 
 // This is a wrapper function for the snapshot creation process.
@@ -346,10 +310,9 @@ func (ctrl *csiSnapshotSideCarController) createSnapshotWrapper(content *crdv1.V
 	newContent, err := ctrl.updateSnapshotContentStatus(content, snapshotID, readyToUse, creationTime.UnixNano(), size)
 	if err != nil {
 		klog.Errorf("error updating status for volume snapshot content %s: %v.", content.Name, err)
-		return nil, fmt.Errorf("error updating status for volume snapshot content %s: %v.", content.Name, err)
-	} else {
-		content = newContent
+		return nil, fmt.Errorf("error updating status for volume snapshot content %s: %v", content.Name, err)
 	}
+	content = newContent
 
 	// NOTE(xyang): handle create timeout
 	// Remove annotation to indicate storage system has successfully
@@ -367,7 +330,7 @@ func (ctrl *csiSnapshotSideCarController) deleteCSISnapshotOperation(content *cr
 	klog.V(5).Infof("deleteCSISnapshotOperation [%s] started", content.Name)
 
 	_, snapshotterCredentials, err := ctrl.getCSISnapshotInput(content)
-	if err != nil {
+	if err != nil && !errors.IsNotFound(err) {
 		ctrl.eventRecorder.Event(content, v1.EventTypeWarning, "SnapshotDeleteError", "Failed to get snapshot class or credentials")
 		return fmt.Errorf("failed to get input parameters to delete snapshot for content %s: %q", content.Name, err)
 	}
@@ -384,8 +347,8 @@ func (ctrl *csiSnapshotSideCarController) deleteCSISnapshotOperation(content *cr
 		ctrl.eventRecorder.Event(content, v1.EventTypeWarning, "SnapshotDeleteError", "Failed to clear content status")
 		return err
 	}
-	// update local cache
-	ctrl.updateContentInCacheStore(newContent)
+	// trigger syncContent
+	ctrl.updateContentInInformerCache(newContent)
 	return nil
 }
 
@@ -396,7 +359,7 @@ func (ctrl *csiSnapshotSideCarController) clearVolumeContentStatus(
 	contentName string) (*crdv1.VolumeSnapshotContent, error) {
 	klog.V(5).Infof("cleanVolumeSnapshotStatus content [%s]", contentName)
 	// get the latest version from API server
-	content, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Get(contentName, metav1.GetOptions{})
+	content, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Get(context.TODO(), contentName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("error get snapshot content %s from api server: %v", contentName, err)
 	}
@@ -406,7 +369,7 @@ func (ctrl *csiSnapshotSideCarController) clearVolumeContentStatus(
 		content.Status.CreationTime = nil
 		content.Status.RestoreSize = nil
 	}
-	newContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().UpdateStatus(content)
+	newContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().UpdateStatus(context.TODO(), content, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, newControllerUpdateError(contentName, err.Error())
 	}
@@ -421,7 +384,7 @@ func (ctrl *csiSnapshotSideCarController) updateSnapshotContentStatus(
 	size int64) (*crdv1.VolumeSnapshotContent, error) {
 	klog.V(5).Infof("updateSnapshotContentStatus: updating VolumeSnapshotContent [%s], snapshotHandle %s, readyToUse %v, createdAt %v, size %d", content.Name, snapshotHandle, readyToUse, createdAt, size)
 
-	contentObj, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Get(content.Name, metav1.GetOptions{})
+	contentObj, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Get(context.TODO(), content.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("error get snapshot content %s from api server: %v", content.Name, err)
 	}
@@ -462,7 +425,7 @@ func (ctrl *csiSnapshotSideCarController) updateSnapshotContentStatus(
 	if updated {
 		contentClone := contentObj.DeepCopy()
 		contentClone.Status = newStatus
-		newContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().UpdateStatus(contentClone)
+		newContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().UpdateStatus(context.TODO(), contentClone, metav1.UpdateOptions{})
 		if err != nil {
 			return nil, newControllerUpdateError(content.Name, err.Error())
 		}
@@ -479,7 +442,7 @@ func (ctrl *csiSnapshotSideCarController) getSnapshotClass(className string) (*c
 	class, err := ctrl.classLister.Get(className)
 	if err != nil {
 		klog.Errorf("failed to retrieve snapshot class %s from the informer: %q", className, err)
-		return nil, fmt.Errorf("failed to retrieve snapshot class %s from the informer: %q", className, err)
+		return nil, err
 	}
 
 	return class, nil
@@ -550,7 +513,7 @@ func (ctrl csiSnapshotSideCarController) removeContentFinalizer(content *crdv1.V
 	contentClone := content.DeepCopy()
 	contentClone.ObjectMeta.Finalizers = slice.RemoveString(contentClone.ObjectMeta.Finalizers, utils.VolumeSnapshotContentFinalizer, nil)
 
-	_, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Update(contentClone)
+	_, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Update(context.TODO(), contentClone, metav1.UpdateOptions{})
 	if err != nil {
 		return newControllerUpdateError(content.Name, err.Error())
 	}
@@ -607,7 +570,7 @@ func (ctrl *csiSnapshotSideCarController) setAnnVolumeSnapshotBeingCreated(conte
 	contentClone := content.DeepCopy()
 	metav1.SetMetaDataAnnotation(&contentClone.ObjectMeta, utils.AnnVolumeSnapshotBeingCreated, "yes")
 
-	updatedContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Update(contentClone)
+	updatedContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Update(context.TODO(), contentClone, metav1.UpdateOptions{})
 	if err != nil {
 		return newControllerUpdateError(content.Name, err.Error())
 	}
@@ -633,7 +596,7 @@ func (ctrl csiSnapshotSideCarController) removeAnnVolumeSnapshotBeingCreated(con
 	contentClone := content.DeepCopy()
 	delete(contentClone.ObjectMeta.Annotations, utils.AnnVolumeSnapshotBeingCreated)
 
-	updatedContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Update(contentClone)
+	updatedContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Update(context.TODO(), contentClone, metav1.UpdateOptions{})
 	if err != nil {
 		return newControllerUpdateError(content.Name, err.Error())
 	}
