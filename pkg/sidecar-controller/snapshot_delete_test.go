@@ -30,7 +30,7 @@ import (
 )
 
 var defaultSize int64 = 1000
-var emptySize int64 = 0
+var emptySize int64
 var deletePolicy = crdv1.VolumeSnapshotContentDelete
 var retainPolicy = crdv1.VolumeSnapshotContentRetain
 var timeNow = time.Now()
@@ -172,6 +172,7 @@ func TestDeleteSync(t *testing.T) {
 			},
 			expectedListCalls:   []listCall{{"sid1-1", map[string]string{}, true, time.Now(), 1, nil}},
 			expectedDeleteCalls: []deleteCall{{"sid1-1", nil, nil}},
+			expectSuccess:       true,
 			test:                testSyncContent,
 		},
 		{
@@ -194,6 +195,7 @@ func TestDeleteSync(t *testing.T) {
 			},
 			expectedListCalls:   []listCall{{"sid1-2", map[string]string{}, true, time.Now(), 1, nil}},
 			expectedDeleteCalls: []deleteCall{{"sid1-2", nil, nil}},
+			expectSuccess:       true,
 			test:                testSyncContent,
 		},
 		{
@@ -219,12 +221,17 @@ func TestDeleteSync(t *testing.T) {
 			test:                testSyncContent,
 		},
 		{
-			name:             "1-4 - fail to delete with a snapshot class which has invalid secret parameter, bound finalizer should remain",
-			initialContents:  newContentArrayWithDeletionTimestamp("content1-1", "snapuid1-1", "snap1-1", "sid1-1", "invalid", "", "snap1-4-volumehandle", deletionPolicy, nil, nil, true, &timeNowMetav1),
-			expectedContents: newContentArrayWithDeletionTimestamp("content1-1", "snapuid1-1", "snap1-1", "sid1-1", "invalid", "", "snap1-4-volumehandle", deletionPolicy, nil, nil, true, &timeNowMetav1),
-			expectedEvents:   noevents,
-			errors:           noerrors,
-			test:             testSyncContent,
+			name:                "1-4 - fail to delete with a snapshot class which has invalid secret parameter, bound finalizer should remain",
+			initialContents:     newContentArrayWithDeletionTimestamp("content1-1", "snapuid1-1", "snap1-1", "sid1-1", "invalid", "", "snap1-4-volumehandle", deletionPolicy, nil, nil, true, &timeNowMetav1),
+			expectedContents:    newContentArrayWithDeletionTimestamp("content1-1", "snapuid1-1", "snap1-1", "sid1-1", "invalid", "", "snap1-4-volumehandle", deletionPolicy, nil, nil, true, &timeNowMetav1),
+			expectedEvents:      noevents,
+			expectedDeleteCalls: []deleteCall{{"sid1-1", nil, fmt.Errorf("mock csi driver delete error")}},
+			errors: []reactorError{
+				// Inject error to the first client.VolumesnapshotV1beta1().VolumeSnapshotContents().Delete call.
+				// All other calls will succeed.
+				{"get", "secrets", errors.New("mock get invalid secret error")},
+			},
+			test: testSyncContent,
 		},
 		{
 			name:                "1-5 - csi driver delete snapshot returns error, bound finalizer should remain",
@@ -330,10 +337,9 @@ func TestDeleteSync(t *testing.T) {
 			test:                testSyncContent,
 		},
 		{
-			name:                "1-15 - (dynamic)deletion of content with no snapshotclass should produce error",
+			name:                "1-15 - (dynamic)deletion of content with no snapshotclass should succeed",
 			initialContents:     newContentArrayWithDeletionTimestamp("content1-15", "sid1-15", "snap1-15", "sid1-15", "", "", "snap1-15-volumehandle", deletePolicy, nil, &defaultSize, true, &timeNowMetav1),
 			expectedContents:    newContentArrayWithDeletionTimestamp("content1-15", "sid1-15", "snap1-15", "sid1-15", "", "", "snap1-15-volumehandle", deletePolicy, nil, &defaultSize, true, &timeNowMetav1),
-			expectedEvents:      []string{"Warning SnapshotDeleteError"},
 			errors:              noerrors,
 			expectedDeleteCalls: []deleteCall{{"sid1-15", nil, nil}},
 			test:                testSyncContent,

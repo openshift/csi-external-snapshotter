@@ -582,7 +582,6 @@ func (r *snapshotReactor) getChangeCount() int {
 // waitForIdle waits until all tests, controllers and other goroutines do their
 // job and no new actions are registered for 10 milliseconds.
 func (r *snapshotReactor) waitForIdle() {
-	r.ctrl.runningOperations.WaitForCompletion()
 	// Check every 10ms if the controller does something and stop if it's
 	// idle.
 	oldChanges := -1
@@ -609,9 +608,6 @@ func (r *snapshotReactor) waitTest(test controllerTest) error {
 		Steps:    10,
 	}
 	err := wait.ExponentialBackoff(backoff, func() (done bool, err error) {
-		// Finish all operations that are in progress
-		r.ctrl.runningOperations.WaitForCompletion()
-
 		// Return 'true' if the reactor reached the expected state
 		err1 := r.checkSnapshots(test.expectedSnapshots)
 		err2 := r.checkContents(test.expectedContents)
@@ -683,7 +679,7 @@ func (r *snapshotReactor) modifyContentEvent(content *crdv1.VolumeSnapshotConten
 	}
 }
 
-// addSnapshotEvent simulates that a snapshot has been deleted in etcd and the
+// addSnapshotEvent simulates that a snapshot has been created in etcd and the
 // controller receives 'snapshot added' event.
 func (r *snapshotReactor) addSnapshotEvent(snapshot *crdv1.VolumeSnapshot) {
 	r.lock.Lock()
@@ -757,8 +753,6 @@ func newTestController(kubeClient kubernetes.Interface, clientset clientset.Inte
 	ctrl.snapshotListerSynced = alwaysReady
 	ctrl.classListerSynced = alwaysReady
 	ctrl.pvcListerSynced = alwaysReady
-	ctrl.createSnapshotContentInterval = time.Millisecond * 5
-	ctrl.createSnapshotContentRetryCount = 3
 
 	return ctrl, nil
 }
@@ -795,13 +789,11 @@ func newContent(contentName, boundToSnapshotUID, boundToSnapshotName, snapshotHa
 	}
 
 	if volumeHandle != "" {
-		content.Spec.Source = crdv1.VolumeSnapshotContentSource{
-			VolumeHandle: &volumeHandle,
-		}
-	} else if desiredSnapshotHandle != "" {
-		content.Spec.Source = crdv1.VolumeSnapshotContentSource{
-			SnapshotHandle: &desiredSnapshotHandle,
-		}
+		content.Spec.Source.VolumeHandle = &volumeHandle
+	}
+
+	if desiredSnapshotHandle != "" {
+		content.Spec.Source.SnapshotHandle = &desiredSnapshotHandle
 	}
 
 	if boundToSnapshotName != "" {
@@ -916,13 +908,10 @@ func newSnapshot(
 	}
 
 	if pvcName != "" {
-		snapshot.Spec.Source = crdv1.VolumeSnapshotSource{
-			PersistentVolumeClaimName: &pvcName,
-		}
-	} else if targetContentName != "" {
-		snapshot.Spec.Source = crdv1.VolumeSnapshotSource{
-			VolumeSnapshotContentName: &targetContentName,
-		}
+		snapshot.Spec.Source.PersistentVolumeClaimName = &pvcName
+	}
+	if targetContentName != "" {
+		snapshot.Spec.Source.VolumeSnapshotContentName = &targetContentName
 	}
 	if withAllFinalizers {
 		return withSnapshotFinalizers([]*crdv1.VolumeSnapshot{&snapshot}, utils.VolumeSnapshotAsSourceFinalizer, utils.VolumeSnapshotBoundFinalizer)[0]

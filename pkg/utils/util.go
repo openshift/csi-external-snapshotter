@@ -17,11 +17,11 @@ limitations under the License.
 package utils
 
 import (
+	"context"
 	"fmt"
-	"strings"
-
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	crdv1 "github.com/kubernetes-csi/external-snapshotter/v2/pkg/apis/volumesnapshot/v1beta1"
@@ -173,15 +173,9 @@ func StoreObjectUpdate(store cache.Store, obj interface{}, className string) (bo
 	return true, nil
 }
 
-// GetSnapshotContentNameForSnapshot returns SnapshotContent.Name for the create VolumeSnapshotContent.
-// The name must be unique.
-func GetSnapshotContentNameForSnapshot(snapshot *crdv1.VolumeSnapshot) string {
-	// If VolumeSnapshot object has SnapshotContentName, use it directly.
-	// This might be the case for static provisioning.
-	if snapshot.Spec.Source.VolumeSnapshotContentName != nil {
-		return *snapshot.Spec.Source.VolumeSnapshotContentName
-	}
-	// Construct SnapshotContentName for dynamic provisioning.
+// GetDynamicSnapshotContentNameForSnapshot returns a unique content name for the
+// passed in VolumeSnapshot to dynamically provision a snapshot.
+func GetDynamicSnapshotContentNameForSnapshot(snapshot *crdv1.VolumeSnapshot) string {
 	return "snapcontent-" + string(snapshot.UID)
 }
 
@@ -221,10 +215,10 @@ func verifyAndGetSecretNameAndNamespaceTemplate(secret secretParamsMap, snapshot
 	} else if numName == 0 {
 		// No secrets specified
 		return "", "", nil
-	} else {
-		// THIS IS NOT A VALID CASE
-		return "", "", fmt.Errorf("unknown error with getting secret name and namespace templates")
 	}
+	// THIS IS NOT A VALID CASE
+	return "", "", fmt.Errorf("unknown error with getting secret name and namespace templates")
+
 }
 
 // getSecretReference returns a reference to the secret specified in the given nameTemplate
@@ -324,7 +318,7 @@ func GetCredentials(k8s kubernetes.Interface, ref *v1.SecretReference) (map[stri
 		return nil, nil
 	}
 
-	secret, err := k8s.CoreV1().Secrets(ref.Namespace).Get(ref.Name, metav1.GetOptions{})
+	secret, err := k8s.CoreV1().Secrets(ref.Namespace).Get(context.TODO(), ref.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("error getting secret %s in namespace %s: %v", ref.Name, ref.Namespace, err)
 	}
@@ -406,14 +400,6 @@ func GetSnapshotStatusForLogging(snapshot *crdv1.VolumeSnapshot) string {
 		ready = *snapshot.Status.ReadyToUse
 	}
 	return fmt.Sprintf("bound to: %q, Completed: %v", snapshotContentName, ready)
-}
-
-// IsSnapshotBound returns true/false if snapshot is bound
-func IsSnapshotBound(snapshot *crdv1.VolumeSnapshot, content *crdv1.VolumeSnapshotContent) bool {
-	if IsVolumeSnapshotRefSet(snapshot, content) && IsBoundVolumeSnapshotContentNameSet(snapshot) {
-		return true
-	}
-	return false
 }
 
 func IsVolumeSnapshotRefSet(snapshot *crdv1.VolumeSnapshot, content *crdv1.VolumeSnapshotContent) bool {
