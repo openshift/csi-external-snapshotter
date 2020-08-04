@@ -52,8 +52,7 @@ import (
 	core "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/util/slice"
+	klog "k8s.io/klog/v2"
 )
 
 // This is a unit test framework for snapshot controller.
@@ -453,7 +452,7 @@ func (r *snapshotReactor) checkSnapshots(expectedSnapshots []*crdv1.VolumeSnapsh
 		// Don't modify the existing object
 		c = c.DeepCopy()
 		c.ResourceVersion = ""
-		if c.Status.Error != nil {
+		if c.Status != nil && c.Status.Error != nil {
 			c.Status.Error.Time = &metav1.Time{}
 		}
 		expectedMap[c.Name] = c
@@ -463,7 +462,7 @@ func (r *snapshotReactor) checkSnapshots(expectedSnapshots []*crdv1.VolumeSnapsh
 		// written by the controller without any locks on it.
 		c = c.DeepCopy()
 		c.ResourceVersion = ""
-		if c.Status.Error != nil {
+		if c.Status != nil && c.Status.Error != nil {
 			c.Status.Error.Time = &metav1.Time{}
 		}
 		gotMap[c.Name] = c
@@ -872,6 +871,18 @@ func newContentWithUnmatchDriverArray(contentName, boundToSnapshotUID, boundToSn
 	}
 }
 
+func newContentArrayWithError(contentName, boundToSnapshotUID, boundToSnapshotName, snapshotHandle, snapshotClassName, desiredSnapshotHandle, volumeHandle string,
+	deletionPolicy crdv1.DeletionPolicy, size, creationTime *int64,
+	withFinalizer bool, snapshotErr *crdv1.VolumeSnapshotError) []*crdv1.VolumeSnapshotContent {
+	content := newContent(contentName, boundToSnapshotUID, boundToSnapshotName, snapshotHandle, snapshotClassName, desiredSnapshotHandle, volumeHandle, deletionPolicy, size, creationTime, withFinalizer, true)
+	ready := false
+	content.Status.ReadyToUse = &ready
+	content.Status.Error = snapshotErr
+	return []*crdv1.VolumeSnapshotContent{
+		content,
+	}
+}
+
 func newSnapshot(
 	snapshotName, snapshotUID, pvcName, targetContentName, snapshotClassName, boundContentName string,
 	readyToUse *bool, creationTime *metav1.Time, restoreSize *resource.Quantity,
@@ -1076,6 +1087,30 @@ func testSyncSnapshotError(ctrl *csiSnapshotCommonController, reactor *snapshotR
 	return fmt.Errorf("syncSnapshot succeeded when failure was expected")
 }
 
+func testUpdateSnapshotErrorStatus(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error {
+	snapshot, err := ctrl.updateSnapshotStatus(test.initialSnapshots[0], test.initialContents[0])
+	if err != nil {
+		return fmt.Errorf("update snapshot status failed: %v", err)
+	}
+	var expected, got *crdv1.VolumeSnapshotError
+	if test.initialContents[0].Status != nil {
+		expected = test.initialContents[0].Status.Error
+	}
+	if snapshot.Status != nil {
+		got = snapshot.Status.Error
+	}
+	if expected == nil && got != nil {
+		return fmt.Errorf("update snapshot status failed: expected nil but got: %v", got)
+	}
+	if expected != nil && got == nil {
+		return fmt.Errorf("update snapshot status failed: expected: %v but got nil", expected)
+	}
+	if expected != nil && got != nil && !reflect.DeepEqual(expected, got) {
+		return fmt.Errorf("update snapshot status failed [A-expected, B-got]: %s", diff.ObjectDiff(expected, got))
+	}
+	return nil
+}
+
 func testSyncContent(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error {
 	return ctrl.syncContent(test.initialContents[0])
 }
@@ -1107,6 +1142,14 @@ func testRemoveSnapshotFinalizer(ctrl *csiSnapshotCommonController, reactor *sna
 func testUpdateSnapshotClass(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error {
 	_, err := ctrl.checkAndUpdateSnapshotClass(test.initialSnapshots[0])
 	return err
+}
+
+func testNewSnapshotContentCreation(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error {
+	if err := ctrl.syncUnreadySnapshot(test.initialSnapshots[0]); err != nil {
+		return fmt.Errorf("syncUnreadySnapshot failed: %v", err)
+	}
+
+	return nil
 }
 
 var (
@@ -1321,7 +1364,7 @@ func evaluateFinalizerTests(ctrl *csiSnapshotCommonController, reactor *snapshot
 		if funcName == "testAddPVCFinalizer" {
 			for _, pvc := range reactor.claims {
 				if test.initialClaims[0].Name == pvc.Name {
-					if !slice.ContainsString(test.initialClaims[0].ObjectMeta.Finalizers, utils.PVCFinalizer, nil) && slice.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer, nil) {
+					if !utils.ContainsString(test.initialClaims[0].ObjectMeta.Finalizers, utils.PVCFinalizer) && utils.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer) {
 						klog.V(4).Infof("test %q succeeded. PVCFinalizer is added to PVC %s", test.name, pvc.Name)
 						bHasPVCFinalizer = true
 					}
@@ -1336,7 +1379,7 @@ func evaluateFinalizerTests(ctrl *csiSnapshotCommonController, reactor *snapshot
 		if funcName == "testRemovePVCFinalizer" {
 			for _, pvc := range reactor.claims {
 				if test.initialClaims[0].Name == pvc.Name {
-					if slice.ContainsString(test.initialClaims[0].ObjectMeta.Finalizers, utils.PVCFinalizer, nil) && !slice.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer, nil) {
+					if utils.ContainsString(test.initialClaims[0].ObjectMeta.Finalizers, utils.PVCFinalizer) && !utils.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer) {
 						klog.V(4).Infof("test %q succeeded. PVCFinalizer is removed from PVC %s", test.name, pvc.Name)
 						bHasPVCFinalizer = false
 					}
@@ -1351,8 +1394,8 @@ func evaluateFinalizerTests(ctrl *csiSnapshotCommonController, reactor *snapshot
 		if funcName == "testAddSnapshotFinalizer" {
 			for _, snapshot := range reactor.snapshots {
 				if test.initialSnapshots[0].Name == snapshot.Name {
-					if !slice.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer, nil) && slice.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer, nil) &&
-						!slice.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer, nil) && slice.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer, nil) {
+					if !utils.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) && utils.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) &&
+						!utils.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) && utils.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) {
 						klog.V(4).Infof("test %q succeeded. Finalizers are added to snapshot %s", test.name, snapshot.Name)
 						bHasSnapshotFinalizer = true
 					}
@@ -1367,8 +1410,8 @@ func evaluateFinalizerTests(ctrl *csiSnapshotCommonController, reactor *snapshot
 		if funcName == "testRemoveSnapshotFinalizer" {
 			for _, snapshot := range reactor.snapshots {
 				if test.initialSnapshots[0].Name == snapshot.Name {
-					if slice.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer, nil) && !slice.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer, nil) &&
-						slice.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer, nil) && !slice.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer, nil) {
+					if utils.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) && !utils.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) &&
+						utils.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) && !utils.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) {
 						klog.V(4).Infof("test %q succeeded. SnapshotFinalizer is removed from Snapshot %s", test.name, snapshot.Name)
 						bHasSnapshotFinalizer = false
 					}

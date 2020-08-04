@@ -30,8 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/scheme"
 	ref "k8s.io/client-go/tools/reference"
-	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/util/slice"
+	klog "k8s.io/klog/v2"
 
 	crdv1 "github.com/kubernetes-csi/external-snapshotter/v2/pkg/apis/volumesnapshot/v1beta1"
 	"github.com/kubernetes-csi/external-snapshotter/v2/pkg/utils"
@@ -223,7 +222,7 @@ func (ctrl *csiSnapshotCommonController) isPVCwithFinalizerInUseByCurrentSnapsho
 	}
 
 	// Check if there is a Finalizer on PVC. If not, return false
-	if !slice.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer, nil) {
+	if !utils.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer) {
 		return false
 	}
 
@@ -453,25 +452,25 @@ func (ctrl *csiSnapshotCommonController) syncUnreadySnapshot(snapshot *crdv1.Vol
 		}
 		klog.V(5).Infof("bindandUpdateVolumeSnapshot %v", newSnapshot)
 		return nil
-	} else if snapshot.Status == nil || snapshot.Status.Error == nil || isControllerUpdateFailError(snapshot.Status.Error) {
-		if snapshot.Spec.Source.PersistentVolumeClaimName == nil {
-			ctrl.updateSnapshotErrorStatusWithEvent(snapshot, v1.EventTypeWarning, "SnapshotPVCSourceMissing", fmt.Sprintf("PVC source for snapshot %s is missing", uniqueSnapshotName))
-			return fmt.Errorf("expected PVC source for snapshot %s but got nil", uniqueSnapshotName)
-		}
-		var err error
-		var content *crdv1.VolumeSnapshotContent
-		if content, err = ctrl.createSnapshotContent(snapshot); err != nil {
-			ctrl.updateSnapshotErrorStatusWithEvent(snapshot, v1.EventTypeWarning, "SnapshotContentCreationFailed", fmt.Sprintf("Failed to create snapshot content with error %v", err))
-			return err
-		}
+	}
 
-		// Update snapshot status with BoundVolumeSnapshotContentName
-		klog.V(5).Infof("syncUnreadySnapshot [%s]: trying to update snapshot status", utils.SnapshotKey(snapshot))
-		if _, err = ctrl.updateSnapshotStatus(snapshot, content); err != nil {
-			// update snapshot status failed
-			ctrl.updateSnapshotErrorStatusWithEvent(snapshot, v1.EventTypeWarning, "SnapshotStatusUpdateFailed", fmt.Sprintf("Snapshot status update failed, %v", err))
-			return err
-		}
+	// If we reach here, it is a dynamically provisioned snapshot, and the volumeSnapshotContent object is not yet created.
+	if snapshot.Spec.Source.PersistentVolumeClaimName == nil {
+		ctrl.updateSnapshotErrorStatusWithEvent(snapshot, v1.EventTypeWarning, "SnapshotPVCSourceMissing", fmt.Sprintf("PVC source for snapshot %s is missing", uniqueSnapshotName))
+		return fmt.Errorf("expected PVC source for snapshot %s but got nil", uniqueSnapshotName)
+	}
+	var content *crdv1.VolumeSnapshotContent
+	if content, err = ctrl.createSnapshotContent(snapshot); err != nil {
+		ctrl.updateSnapshotErrorStatusWithEvent(snapshot, v1.EventTypeWarning, "SnapshotContentCreationFailed", fmt.Sprintf("Failed to create snapshot content with error %v", err))
+		return err
+	}
+
+	// Update snapshot status with BoundVolumeSnapshotContentName
+	klog.V(5).Infof("syncUnreadySnapshot [%s]: trying to update snapshot status", utils.SnapshotKey(snapshot))
+	if _, err = ctrl.updateSnapshotStatus(snapshot, content); err != nil {
+		// update snapshot status failed
+		ctrl.updateSnapshotErrorStatusWithEvent(snapshot, v1.EventTypeWarning, "SnapshotStatusUpdateFailed", fmt.Sprintf("Snapshot status update failed, %v", err))
+		return err
 	}
 	return nil
 }
@@ -821,7 +820,7 @@ func (ctrl *csiSnapshotCommonController) ensurePVCFinalizer(snapshot *crdv1.Volu
 	}
 
 	// If PVC is not being deleted and PVCFinalizer is not added yet, the PVCFinalizer should be added.
-	if pvc.ObjectMeta.DeletionTimestamp == nil && !slice.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer, nil) {
+	if pvc.ObjectMeta.DeletionTimestamp == nil && !utils.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer) {
 		// Add the finalizer
 		pvcClone := pvc.DeepCopy()
 		pvcClone.ObjectMeta.Finalizers = append(pvcClone.ObjectMeta.Finalizers, utils.PVCFinalizer)
@@ -842,7 +841,7 @@ func (ctrl *csiSnapshotCommonController) removePVCFinalizer(pvc *v1.PersistentVo
 	// TODO(xyang): We get PVC from informer but it may be outdated
 	// Should get it from API server directly before removing finalizer
 	pvcClone := pvc.DeepCopy()
-	pvcClone.ObjectMeta.Finalizers = slice.RemoveString(pvcClone.ObjectMeta.Finalizers, utils.PVCFinalizer, nil)
+	pvcClone.ObjectMeta.Finalizers = utils.RemoveString(pvcClone.ObjectMeta.Finalizers, utils.PVCFinalizer)
 
 	_, err := ctrl.client.CoreV1().PersistentVolumeClaims(pvcClone.Namespace).Update(context.TODO(), pvcClone, metav1.UpdateOptions{})
 	if err != nil {
@@ -898,7 +897,7 @@ func (ctrl *csiSnapshotCommonController) checkandRemovePVCFinalizer(snapshot *cr
 	klog.V(5).Infof("checkandRemovePVCFinalizer for snapshot [%s]: snapshot status [%#v]", snapshot.Name, snapshot.Status)
 
 	// Check if there is a Finalizer on PVC to be removed
-	if slice.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer, nil) {
+	if utils.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer) {
 		// There is a Finalizer on PVC. Check if PVC is used
 		// and remove finalizer if it's not used.
 		inUse := ctrl.isPVCBeingUsed(pvc, snapshot)
@@ -1031,6 +1030,10 @@ func (ctrl *csiSnapshotCommonController) updateSnapshotStatus(snapshot *crdv1.Vo
 	if content.Status != nil && content.Status.ReadyToUse != nil {
 		readyToUse = *content.Status.ReadyToUse
 	}
+	var volumeSnapshotErr *crdv1.VolumeSnapshotError
+	if content.Status != nil && content.Status.Error != nil {
+		volumeSnapshotErr = content.Status.Error.DeepCopy()
+	}
 
 	klog.V(5).Infof("updateSnapshotStatus: updating VolumeSnapshot [%+v] based on VolumeSnapshotContentStatus [%+v]", snapshot, content.Status)
 
@@ -1052,6 +1055,9 @@ func (ctrl *csiSnapshotCommonController) updateSnapshotStatus(snapshot *crdv1.Vo
 		if size != nil {
 			newStatus.RestoreSize = resource.NewQuantity(*size, resource.BinarySI)
 		}
+		if volumeSnapshotErr != nil {
+			newStatus.Error = volumeSnapshotErr
+		}
 		updated = true
 	} else {
 		newStatus = snapshotObj.Status.DeepCopy()
@@ -1072,6 +1078,10 @@ func (ctrl *csiSnapshotCommonController) updateSnapshotStatus(snapshot *crdv1.Vo
 		}
 		if (newStatus.RestoreSize == nil && size != nil) || (newStatus.RestoreSize != nil && newStatus.RestoreSize.IsZero() && size != nil && *size > 0) {
 			newStatus.RestoreSize = resource.NewQuantity(*size, resource.BinarySI)
+			updated = true
+		}
+		if (newStatus.Error == nil && volumeSnapshotErr != nil) || (newStatus.Error != nil && volumeSnapshotErr != nil && newStatus.Error.Time != nil && volumeSnapshotErr.Time != nil && &newStatus.Error.Time != &volumeSnapshotErr.Time) || (newStatus.Error != nil && volumeSnapshotErr == nil) {
+			newStatus.Error = volumeSnapshotErr
 			updated = true
 		}
 	}
@@ -1295,10 +1305,10 @@ func (ctrl *csiSnapshotCommonController) removeSnapshotFinalizer(snapshot *crdv1
 
 	snapshotClone := snapshot.DeepCopy()
 	if removeSourceFinalizer {
-		snapshotClone.ObjectMeta.Finalizers = slice.RemoveString(snapshotClone.ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer, nil)
+		snapshotClone.ObjectMeta.Finalizers = utils.RemoveString(snapshotClone.ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer)
 	}
 	if removeBoundFinalizer {
-		snapshotClone.ObjectMeta.Finalizers = slice.RemoveString(snapshotClone.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer, nil)
+		snapshotClone.ObjectMeta.Finalizers = utils.RemoveString(snapshotClone.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer)
 	}
 	_, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshots(snapshotClone.Namespace).Update(context.TODO(), snapshotClone, metav1.UpdateOptions{})
 	if err != nil {
