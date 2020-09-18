@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/v2/pkg/apis/volumesnapshot/v1beta1"
-	clientset "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/clientset/versioned"
-	storageinformers "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/informers/externalversions/volumesnapshot/v1beta1"
-	storagelisters "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/listers/volumesnapshot/v1beta1"
-	"github.com/kubernetes-csi/external-snapshotter/v2/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v3/apis/volumesnapshot/v1beta1"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned"
+	storageinformers "github.com/kubernetes-csi/external-snapshotter/client/v3/informers/externalversions/volumesnapshot/v1beta1"
+	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v3/listers/volumesnapshot/v1beta1"
+	"github.com/kubernetes-csi/external-snapshotter/v3/pkg/utils"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -38,7 +38,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
+	klog "k8s.io/klog/v2"
 )
 
 type csiSnapshotCommonController struct {

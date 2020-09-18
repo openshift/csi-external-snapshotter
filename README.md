@@ -6,6 +6,8 @@ The CSI snapshotter is part of Kubernetes implementation of [Container Storage I
 
 The volume snapshot feature supports CSI v1.0 and higher. It was introduced as an Alpha feature in Kubernetes v1.12 and has been promoted to an Beta feature in Kubernetes 1.17.
 
+> :warning: **WARNING**: There is a new validating webhook server which provides tightened validation on snapshot objects. This SHOULD be installed by all users of this feature. More details [below](#validating-webhook).
+
 
 ## Overview
 
@@ -28,9 +30,9 @@ This information reflects the head of this branch.
 
 | Compatible with CSI Version                                                                | Container Image             | [Min K8s Version](https://kubernetes-csi.github.io/docs/kubernetes-compatibility.html#minimum-version) | Snapshot CRD version |
 | ------------------------------------------------------------------------------------------ | ----------------------------| --------------- | -------------------- |
-| [CSI Spec v1.0.0](https://github.com/container-storage-interface/spec/releases/tag/v1.0.0) | quay.io/k8scsi/csi-snapshotter | 1.17         | v1beta1              |
-| [CSI Spec v1.0.0](https://github.com/container-storage-interface/spec/releases/tag/v1.0.0) | quay.io/k8scsi/snapshot-controller | 1.17     | v1beta1              |
-
+| [CSI Spec v1.2.0](https://github.com/container-storage-interface/spec/releases/tag/v1.2.0) | k8s.gcr.io/sig-storage/csi-snapshotter | 1.17         | v1beta1              |
+| [CSI Spec v1.2.0](https://github.com/container-storage-interface/spec/releases/tag/v1.2.0) | k8s.gcr.io/sig-storage/snapshot-controller  | 1.17     | v1beta1              |
+| [CSI Spec v1.2.0](https://github.com/container-storage-interface/spec/releases/tag/v1.2.0) | k8s.gcr.io/sig-storage/snapshot-validation-webhook  | 1.17     | v1beta1              |
 
 ## Feature Status
 
@@ -62,9 +64,11 @@ Therefore, it is strongly recommended that Kubernetes distributors bundle and de
 
 If your Kubernetes distribution does not bundle the snapshot controller, you may manually install these components by executing the following steps. Note that the snapshot controller YAML files in the git repository deploy into the default namespace for system testing purposes. For general use, update the snapshot controller YAMLs with an appropriate namespace prior to installing. For example, on a Vanilla Kubernetes cluster update the namespace from 'default' to 'kube-system' prior to issuing the kubectl create command.
 
+There is a new validating webhook server which provides tightened validation on snapshot objects. The cluster admin or Kubernetes distribution admin should install the webhook alongside the snapshot controllers and CRDs. More details [below](#validating-webhook).
+
 Install Snapshot Beta CRDs:
-* kubectl create -f config/crd
-* https://github.com/kubernetes-csi/external-snapshotter/tree/master/config/crd
+* kubectl create -f client/config/crd
+* https://github.com/kubernetes-csi/external-snapshotter/tree/master/client/config/crd
 * Do this once per cluster
 
 Install Common Snapshot Controller:
@@ -78,6 +82,22 @@ Install CSI Driver:
 * Here is an example to install the sample hostpath CSI driver
   * kubectl create -f deploy/kubernetes/csi-snapshotter
   * https://github.com/kubernetes-csi/external-snapshotter/tree/master/deploy/kubernetes/csi-snapshotter
+
+### Validating Webhook
+
+The snapshot validating webhook is an HTTP callback which responds to [admission requests](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/). It is part of a larger [plan](https://github.com/kubernetes/enhancements/blob/master/keps/sig-storage/177-volume-snapshot/tighten-validation-webhook-crd.md) to tighten validation for volume snapshot objects. This webhook introduces the [ratcheting validation](https://github.com/kubernetes/enhancements/blob/master/keps/sig-storage/177-volume-snapshot/tighten-validation-webhook-crd.md#backwards-compatibility) mechanism targeting the tighter validation. The cluster admin or Kubernetes distribution admin should install the webhook alongside the snapshot controllers and CRDs.
+
+> :warning: **WARNING**: Cluster admins choosing not to install the webhook server and participate in the phased release process can cause future problems when upgrading from `v1beta1` to `v1` volumesnapshot API, if there are currently persisted objects which fail the new stricter validation. Potential impacts include being unable to delete invalid snapshot objects.
+
+Read more about how to install the example webhook [here](deploy/kubernetes/webhook-example/README.md).
+
+####  Validating Webhook Command Line Options
+
+* `--tls-cert-file`: File containing the x509 Certificate for HTTPS. (CA cert, if any, concatenated after server cert). Required.
+
+* `--tls-private-key-file`: File containing the x509 private key matching --tls-cert-file. Required.
+
+* `--port`: Secure port that the webhook listens on (default 443)
 
 ### Snapshot controller command line options
 
@@ -149,6 +169,11 @@ go test -timeout 30s  github.com/kubernetes-csi/external-snapshotter/pkg/common-
 go test -timeout 30s  github.com/kubernetes-csi/external-snapshotter/pkg/sidecar-controller
 ```
 
+## CRDs and Client Library
+
+Volume snapshot APIs and client library are now in a separate sub-module: `github.com/kubernetes-csi/external-snapshotter/client/v3`.
+
+Use the command `go get -u github.com/kubernetes-csi/external-snapshotter/client/v3@v3.0.0` to get the client library.
 
 ## Dependency Management
 
