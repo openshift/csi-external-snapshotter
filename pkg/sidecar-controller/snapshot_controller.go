@@ -22,15 +22,14 @@ import (
 	"strings"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/v2/pkg/apis/volumesnapshot/v1beta1"
-	"github.com/kubernetes-csi/external-snapshotter/v2/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v3/apis/volumesnapshot/v1beta1"
+	"github.com/kubernetes-csi/external-snapshotter/v3/pkg/utils"
 	codes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/util/slice"
+	klog "k8s.io/klog/v2"
 )
 
 // Design:
@@ -160,13 +159,13 @@ func (ctrl *csiSnapshotSideCarController) updateContentErrorStatusWithEvent(cont
 	contentClone.Status.ReadyToUse = &ready
 	newContent, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().UpdateStatus(context.TODO(), contentClone, metav1.UpdateOptions{})
 
+	// Emit the event even if the status update fails so that user can see the error
+	ctrl.eventRecorder.Event(newContent, eventtype, reason, message)
+
 	if err != nil {
 		klog.V(4).Infof("updating VolumeSnapshotContent[%s] error status failed %v", content.Name, err)
 		return err
 	}
-
-	// Emit the event only when the status change happens
-	ctrl.eventRecorder.Event(newContent, eventtype, reason, message)
 
 	_, err = ctrl.storeContentUpdate(newContent)
 	if err != nil {
@@ -506,12 +505,12 @@ func (ctrl *csiSnapshotSideCarController) GetCredentialsFromAnnotation(content *
 // removeContentFinalizer removes the VolumeSnapshotContentFinalizer from a
 // content if there exists one.
 func (ctrl csiSnapshotSideCarController) removeContentFinalizer(content *crdv1.VolumeSnapshotContent) error {
-	if !slice.ContainsString(content.ObjectMeta.Finalizers, utils.VolumeSnapshotContentFinalizer, nil) {
+	if !utils.ContainsString(content.ObjectMeta.Finalizers, utils.VolumeSnapshotContentFinalizer) {
 		// the finalizer does not exit, return directly
 		return nil
 	}
 	contentClone := content.DeepCopy()
-	contentClone.ObjectMeta.Finalizers = slice.RemoveString(contentClone.ObjectMeta.Finalizers, utils.VolumeSnapshotContentFinalizer, nil)
+	contentClone.ObjectMeta.Finalizers = utils.RemoveString(contentClone.ObjectMeta.Finalizers, utils.VolumeSnapshotContentFinalizer)
 
 	_, err := ctrl.clientset.SnapshotV1beta1().VolumeSnapshotContents().Update(context.TODO(), contentClone, metav1.UpdateOptions{})
 	if err != nil {

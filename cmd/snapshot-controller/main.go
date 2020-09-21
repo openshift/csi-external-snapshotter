@@ -28,14 +28,14 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/klog"
+	klog "k8s.io/klog/v2"
 
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
-	controller "github.com/kubernetes-csi/external-snapshotter/v2/pkg/common-controller"
+	controller "github.com/kubernetes-csi/external-snapshotter/v3/pkg/common-controller"
 
-	clientset "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/clientset/versioned"
-	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/clientset/versioned/scheme"
-	informers "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/informers/externalversions"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned"
+	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned/scheme"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v3/informers/externalversions"
 	coreinformers "k8s.io/client-go/informers"
 )
 
@@ -120,7 +120,13 @@ func main() {
 		run(context.TODO())
 	} else {
 		lockName := "snapshot-controller-leader"
-		le := leaderelection.NewLeaderElection(kubeClient, lockName, run)
+		// Create a new clientset for leader election to prevent throttling
+		// due to snapshot controller
+		leClientset, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			klog.Fatalf("failed to create leaderelection client: %v", err)
+		}
+		le := leaderelection.NewLeaderElection(leClientset, lockName, run)
 		if *leaderElectionNamespace != "" {
 			le.WithNamespace(*leaderElectionNamespace)
 		}

@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/v2/pkg/apis/volumesnapshot/v1beta1"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v3/apis/volumesnapshot/v1beta1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,8 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/util/slice"
+	klog "k8s.io/klog/v2"
 )
 
 var (
@@ -95,6 +94,13 @@ const (
 	// and used at snapshot content deletion time.
 	AnnDeletionSecretRefName      = "snapshot.storage.kubernetes.io/deletion-secret-name"
 	AnnDeletionSecretRefNamespace = "snapshot.storage.kubernetes.io/deletion-secret-namespace"
+
+	// VolumeSnapshotContentInvalidLabel is applied to invalid content as a label key. The value does not matter.
+	// See https://github.com/kubernetes/enhancements/blob/master/keps/sig-storage/177-volume-snapshot/tighten-validation-webhook-crd.md#automatic-labelling-of-invalid-objects
+	VolumeSnapshotContentInvalidLabel = "snapshot.storage.kubernetes.io/invalid-snapshot-content-resource"
+	// VolumeSnapshotInvalidLabel is applied to invalid snapshot as a label key. The value does not matter.
+	// See https://github.com/kubernetes/enhancements/blob/master/keps/sig-storage/177-volume-snapshot/tighten-validation-webhook-crd.md#automatic-labelling-of-invalid-objects
+	VolumeSnapshotInvalidLabel = "snapshot.storage.kubernetes.io/invalid-snapshot-resource"
 )
 
 var SnapshotterSecretParams = secretParamsMap{
@@ -107,6 +113,89 @@ var SnapshotterListSecretParams = secretParamsMap{
 	name:               "SnapshotterList",
 	secretNameKey:      PrefixedSnapshotterListSecretNameKey,
 	secretNamespaceKey: PrefixedSnapshotterListSecretNamespaceKey,
+}
+
+// ValidateSnapshot performs additional strict validation.
+// Do NOT rely on this function to fully validate snapshot objects.
+// This function will only check the additional rules provided by the webhook.
+func ValidateSnapshot(snapshot *crdv1.VolumeSnapshot) error {
+	if snapshot == nil {
+		return fmt.Errorf("VolumeSnapshot is nil")
+	}
+
+	source := snapshot.Spec.Source
+
+	if source.PersistentVolumeClaimName != nil && source.VolumeSnapshotContentName != nil {
+		return fmt.Errorf("only one of Spec.Source.PersistentVolumeClaimName = %s and Spec.Source.VolumeSnapshotContentName = %s should be set", *source.PersistentVolumeClaimName, *source.VolumeSnapshotContentName)
+	}
+	if source.PersistentVolumeClaimName == nil && source.VolumeSnapshotContentName == nil {
+		return fmt.Errorf("one of Spec.Source.PersistentVolumeClaimName and Spec.Source.VolumeSnapshotContentName should be set")
+	}
+	vscname := snapshot.Spec.VolumeSnapshotClassName
+	if vscname != nil && *vscname == "" {
+		return fmt.Errorf("Spec.VolumeSnapshotClassName must not be the empty string")
+	}
+	return nil
+}
+
+// ValidateSnapshotContent performs additional strict validation.
+// Do NOT rely on this function to fully validate snapshot content objects.
+// This function will only check the additional rules provided by the webhook.
+func ValidateSnapshotContent(snapcontent *crdv1.VolumeSnapshotContent) error {
+	if snapcontent == nil {
+		return fmt.Errorf("VolumeSnapshotContent is nil")
+	}
+
+	source := snapcontent.Spec.Source
+
+	if source.VolumeHandle != nil && source.SnapshotHandle != nil {
+		return fmt.Errorf("only one of Spec.Source.VolumeHandle = %s and Spec.Source.SnapshotHandle = %s should be set", *source.VolumeHandle, *source.SnapshotHandle)
+	}
+	if source.VolumeHandle == nil && source.SnapshotHandle == nil {
+		return fmt.Errorf("one of Spec.Source.VolumeHandle and Spec.Source.SnapshotHandle should be set")
+	}
+
+	vsref := snapcontent.Spec.VolumeSnapshotRef
+
+	if vsref.Name == "" || vsref.Namespace == "" {
+		return fmt.Errorf("both Spec.VolumeSnapshotRef.Name = %s and Spec.VolumeSnapshotRef.Namespace = %s must be set", vsref.Name, vsref.Namespace)
+	}
+
+	return nil
+}
+
+// MapContainsKey checks if a given map of string to string contains the provided string.
+func MapContainsKey(m map[string]string, s string) bool {
+	_, r := m[s]
+	return r
+}
+
+// ContainsString checks if a given slice of strings contains the provided string.
+func ContainsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveString returns a newly created []string that contains all items from slice that
+// are not equal to s.
+func RemoveString(slice []string, s string) []string {
+	newSlice := make([]string, 0)
+	for _, item := range slice {
+		if item == s {
+			continue
+		}
+		newSlice = append(newSlice, item)
+	}
+	if len(newSlice) == 0 {
+		// Sanitize for unit tests so we don't need to distinguish empty array
+		// and nil.
+		newSlice = nil
+	}
+	return newSlice
 }
 
 func SnapshotKey(vs *crdv1.VolumeSnapshot) string {
@@ -337,23 +426,23 @@ func NoResyncPeriodFunc() time.Duration {
 
 // NeedToAddContentFinalizer checks if a Finalizer needs to be added for the volume snapshot content.
 func NeedToAddContentFinalizer(content *crdv1.VolumeSnapshotContent) bool {
-	return content.ObjectMeta.DeletionTimestamp == nil && !slice.ContainsString(content.ObjectMeta.Finalizers, VolumeSnapshotContentFinalizer, nil)
+	return content.ObjectMeta.DeletionTimestamp == nil && !ContainsString(content.ObjectMeta.Finalizers, VolumeSnapshotContentFinalizer)
 }
 
 // IsSnapshotDeletionCandidate checks if a volume snapshot deletionTimestamp
 // is set and any finalizer is on the snapshot.
 func IsSnapshotDeletionCandidate(snapshot *crdv1.VolumeSnapshot) bool {
-	return snapshot.ObjectMeta.DeletionTimestamp != nil && (slice.ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotAsSourceFinalizer, nil) || slice.ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotBoundFinalizer, nil))
+	return snapshot.ObjectMeta.DeletionTimestamp != nil && (ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotAsSourceFinalizer) || ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotBoundFinalizer))
 }
 
 // NeedToAddSnapshotAsSourceFinalizer checks if a Finalizer needs to be added for the volume snapshot as a source for PVC.
 func NeedToAddSnapshotAsSourceFinalizer(snapshot *crdv1.VolumeSnapshot) bool {
-	return snapshot.ObjectMeta.DeletionTimestamp == nil && !slice.ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotAsSourceFinalizer, nil)
+	return snapshot.ObjectMeta.DeletionTimestamp == nil && !ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotAsSourceFinalizer)
 }
 
 // NeedToAddSnapshotBoundFinalizer checks if a Finalizer needs to be added for the bound volume snapshot.
 func NeedToAddSnapshotBoundFinalizer(snapshot *crdv1.VolumeSnapshot) bool {
-	return snapshot.ObjectMeta.DeletionTimestamp == nil && !slice.ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotBoundFinalizer, nil) && IsBoundVolumeSnapshotContentNameSet(snapshot)
+	return snapshot.ObjectMeta.DeletionTimestamp == nil && !ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotBoundFinalizer) && IsBoundVolumeSnapshotContentNameSet(snapshot)
 }
 
 func deprecationWarning(deprecatedParam, newParam, removalVersion string) string {

@@ -31,19 +31,19 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/klog"
+	klog "k8s.io/klog/v2"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/kubernetes-csi/csi-lib-utils/connection"
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	"github.com/kubernetes-csi/csi-lib-utils/metrics"
 	csirpc "github.com/kubernetes-csi/csi-lib-utils/rpc"
-	controller "github.com/kubernetes-csi/external-snapshotter/v2/pkg/sidecar-controller"
-	"github.com/kubernetes-csi/external-snapshotter/v2/pkg/snapshotter"
+	controller "github.com/kubernetes-csi/external-snapshotter/v3/pkg/sidecar-controller"
+	"github.com/kubernetes-csi/external-snapshotter/v3/pkg/snapshotter"
 
-	clientset "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/clientset/versioned"
-	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/clientset/versioned/scheme"
-	informers "github.com/kubernetes-csi/external-snapshotter/v2/pkg/client/informers/externalversions"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned"
+	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned/scheme"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v3/informers/externalversions"
 	coreinformers "k8s.io/client-go/informers"
 )
 
@@ -193,7 +193,13 @@ func main() {
 		run(context.TODO())
 	} else {
 		lockName := fmt.Sprintf("%s-%s", prefix, strings.Replace(driverName, "/", "-", -1))
-		le := leaderelection.NewLeaderElection(kubeClient, lockName, run)
+		// Create a new clientset for leader election to prevent throttling
+		// due to snapshot sidecar
+		leClientset, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			klog.Fatalf("failed to create leaderelection client: %v", err)
+		}
+		le := leaderelection.NewLeaderElection(leClientset, lockName, run)
 		if *leaderElectionNamespace != "" {
 			le.WithNamespace(*leaderElectionNamespace)
 		}
