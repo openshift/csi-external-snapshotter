@@ -1,3 +1,55 @@
+# Release notes for v3.0.2
+
+[Documentation](https://kubernetes-csi.github.io)
+
+# Changelog since v3.0.1
+
+## Changes by Kind
+
+### Bug or Regression
+
+- Cherry-pick from https://github.com/kubernetes-csi/external-snapshotter/pull/413. Bug fix to allow creation of snapshot content if pvc finalizer exists, even if pvc is marked for deletion. ([#414](https://github.com/kubernetes-csi/external-snapshotter/pull/414), [@RaunakShah](https://github.com/RaunakShah))
+
+- Cherry-pick PR ([#381](https://github.com/kubernetes-csi/external-snapshotter/pull/381), [@jsafrane](https://github.com/jsafrane)). Fix crash of snapshot-controller when source PVC of a snapshot to take does not exist. ([#416](https://github.com/kubernetes-csi/external-snapshotter/pull/416), [@xing-yang](https://github.com/xing-yang)).
+
+## Dependencies
+
+### Added
+_Nothing has changed._
+
+### Changed
+_Nothing has changed._
+
+### Removed
+_Nothing has changed._
+
+
+# Release notes for v3.0.1
+
+[Documentation](https://kubernetes-csi.github.io)
+
+# Changelog since v3.0.0
+
+## Changes by Kind
+
+### Bug or Regression
+
+- Cherry-pick from https://github.com/kubernetes-csi/external-snapshotter/pull/387. Add `process_start_time_seconds` metric so that we can properly extrapolate the beginning part of the histogram data. ([#388](https://github.com/kubernetes-csi/external-snapshotter/pull/388), [@Jiawei0227](https://github.com/Jiawei0227))
+
+## Dependencies
+
+### Added
+_Nothing has changed._
+
+### Changed
+- github.com/kubernetes-csi/csi-lib-utils: [v0.7.0 → v0.8.1](https://github.com/kubernetes-csi/csi-lib-utils/compare/v0.7.0...v0.8.1)
+- github.com/stretchr/testify: [v1.4.0 → v1.5.1](https://github.com/stretchr/testify/compare/v1.4.0...v1.5.1)
+- google.golang.org/grpc: v1.28.0 → v1.29.0
+
+### Removed
+_Nothing has changed._
+
+
 # Release notes for v3.0.0
 
 [Documentation](https://kubernetes-csi.github.io)
