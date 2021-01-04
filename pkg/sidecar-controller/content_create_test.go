@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v3/apis/volumesnapshot/v1beta1"
-	"github.com/kubernetes-csi/external-snapshotter/v3/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/utils"
 	v1 "k8s.io/api/core/v1"
 )
 
@@ -41,6 +41,11 @@ func TestSyncContent(t *testing.T) {
 					snapshotName: "snapshot-snapuid1-1",
 					driverName:   mockDriverName,
 					snapshotId:   "snapuid1-1",
+					parameters: map[string]string{
+						utils.PrefixedVolumeSnapshotNameKey:        "snap1-1",
+						utils.PrefixedVolumeSnapshotNamespaceKey:   "default",
+						utils.PrefixedVolumeSnapshotContentNameKey: "content1-1",
+					},
 					creationTime: timeNow,
 					readyToUse:   true,
 				},
@@ -63,6 +68,11 @@ func TestSyncContent(t *testing.T) {
 					snapshotName: "snapshot-snapuid1-2",
 					driverName:   mockDriverName,
 					snapshotId:   "snapuid1-2",
+					parameters: map[string]string{
+						utils.PrefixedVolumeSnapshotNameKey:        "snap1-2",
+						utils.PrefixedVolumeSnapshotNamespaceKey:   "default",
+						utils.PrefixedVolumeSnapshotContentNameKey: "content1-2",
+					},
 					creationTime: timeNow,
 					readyToUse:   true,
 					size:         defaultSize,
@@ -114,7 +124,13 @@ func TestSyncContent(t *testing.T) {
 				{
 					volumeHandle: "volume-handle-1-4",
 					snapshotName: "snapshot-snapuid1-4",
-					parameters:   class5Parameters,
+					parameters: map[string]string{
+						utils.AnnDeletionSecretRefName:             "secret",
+						utils.AnnDeletionSecretRefNamespace:        "default",
+						utils.PrefixedVolumeSnapshotNameKey:        "snap1-4",
+						utils.PrefixedVolumeSnapshotNamespaceKey:   "default",
+						utils.PrefixedVolumeSnapshotContentNameKey: "content1-4",
+					},
 					secrets: map[string]string{
 						"foo": "bar",
 					},
@@ -149,7 +165,7 @@ func TestSyncContent(t *testing.T) {
 			}), initialSecrets: []*v1.Secret{}, // no initial secret created
 			expectedEvents: []string{"Warning SnapshotCreationFailed"},
 			errors: []reactorError{
-				// Inject error to the first client.VolumesnapshotV1beta1().VolumeSnapshots().Update call.
+				// Inject error to the first client.VolumesnapshotV1().VolumeSnapshots().Update call.
 				// All other calls will succeed.
 				{"get", "secrets", errors.New("mock secrets error")},
 			},

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -31,23 +32,27 @@ import (
 	klog "k8s.io/klog/v2"
 
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
-	controller "github.com/kubernetes-csi/external-snapshotter/v3/pkg/common-controller"
+	controller "github.com/kubernetes-csi/external-snapshotter/v4/pkg/common-controller"
+	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/metrics"
 
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned"
-	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned/scheme"
-	informers "github.com/kubernetes-csi/external-snapshotter/client/v3/informers/externalversions"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned"
+	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned/scheme"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v4/informers/externalversions"
 	coreinformers "k8s.io/client-go/informers"
 )
 
 // Command line flags
 var (
 	kubeconfig   = flag.String("kubeconfig", "", "Absolute path to the kubeconfig file. Required only when running out of cluster.")
-	resyncPeriod = flag.Duration("resync-period", 60*time.Second, "Resync interval of the controller.")
+	resyncPeriod = flag.Duration("resync-period", 15*time.Minute, "Resync interval of the controller.")
 	showVersion  = flag.Bool("version", false, "Show version.")
 	threads      = flag.Int("worker-threads", 10, "Number of worker threads.")
 
 	leaderElection          = flag.Bool("leader-election", false, "Enables leader election.")
 	leaderElectionNamespace = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Defaults to the pod namespace if not set.")
+
+	httpEndpoint = flag.String("http-endpoint", "", "The TCP network address where the HTTP server for diagnostics, including metrics, will listen (example: :8080). The default is empty string, which means the server is disabled.")
+	metricsPath  = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
 )
 
 var (
@@ -87,6 +92,28 @@ func main() {
 	factory := informers.NewSharedInformerFactory(snapClient, *resyncPeriod)
 	coreFactory := coreinformers.NewSharedInformerFactory(kubeClient, *resyncPeriod)
 
+	// Create and register metrics manager
+	metricsManager := metrics.NewMetricsManager()
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	if *httpEndpoint != "" {
+		srv, err := metricsManager.StartMetricsEndpoint(*metricsPath, *httpEndpoint, promklog{}, wg)
+		if err != nil {
+			klog.Errorf("Failed to start metrics server: %s", err.Error())
+			os.Exit(1)
+		}
+		defer func() {
+			err := srv.Shutdown(context.Background())
+			if err != nil {
+				klog.Errorf("Failed to shutdown metrics server: %s", err.Error())
+			}
+
+			klog.Infof("Metrics server successfully shutdown")
+			wg.Done()
+		}()
+		klog.Infof("Metrics server successfully started on %s, %s", *httpEndpoint, *metricsPath)
+	}
+
 	// Add Snapshot types to the default Kubernetes so events can be logged for them
 	snapshotscheme.AddToScheme(scheme.Scheme)
 
@@ -95,10 +122,11 @@ func main() {
 	ctrl := controller.NewCSISnapshotCommonController(
 		snapClient,
 		kubeClient,
-		factory.Snapshot().V1beta1().VolumeSnapshots(),
-		factory.Snapshot().V1beta1().VolumeSnapshotContents(),
-		factory.Snapshot().V1beta1().VolumeSnapshotClasses(),
+		factory.Snapshot().V1().VolumeSnapshots(),
+		factory.Snapshot().V1().VolumeSnapshotContents(),
+		factory.Snapshot().V1().VolumeSnapshotClasses(),
 		coreFactory.Core().V1().PersistentVolumeClaims(),
+		metricsManager,
 		*resyncPeriod,
 	)
 
@@ -141,4 +169,10 @@ func buildConfig(kubeconfig string) (*rest.Config, error) {
 		return clientcmd.BuildConfigFromFlags("", kubeconfig)
 	}
 	return rest.InClusterConfig()
+}
+
+type promklog struct{}
+
+func (pl promklog) Println(v ...interface{}) {
+	klog.Error(v...)
 }

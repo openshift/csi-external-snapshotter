@@ -24,7 +24,8 @@ import (
 	"strings"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v3/apis/volumesnapshot/v1beta1"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
+	crdv1beta1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1beta1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,7 +50,9 @@ const (
 	// CSI Parameters prefixed with csiParameterPrefix are not passed through
 	// to the driver on CreateSnapshotRequest calls. Instead they are intended
 	// to be used by the CSI external-snapshotter and maybe used to populate
-	// fields in subsequent CSI calls or Kubernetes API objects.
+	// fields in subsequent CSI calls or Kubernetes API objects. An exception
+	// exists for the volume snapshot and volume snapshot content keys, which are
+	// passed as parameters on CreateSnapshotRequest calls.
 	csiParameterPrefix = "csi.storage.k8s.io/"
 
 	PrefixedSnapshotterSecretNameKey      = csiParameterPrefix + "snapshotter-secret-name"      // Prefixed name key for DeleteSnapshot secret
@@ -57,6 +60,10 @@ const (
 
 	PrefixedSnapshotterListSecretNameKey      = csiParameterPrefix + "snapshotter-list-secret-name"      // Prefixed name key for ListSnapshots secret
 	PrefixedSnapshotterListSecretNamespaceKey = csiParameterPrefix + "snapshotter-list-secret-namespace" // Prefixed namespace key for ListSnapshots secret
+
+	PrefixedVolumeSnapshotNameKey        = csiParameterPrefix + "volumesnapshot/name"        // Prefixed VolumeSnapshot name key
+	PrefixedVolumeSnapshotNamespaceKey   = csiParameterPrefix + "volumesnapshot/namespace"   // Prefixed VolumeSnapshot namespace key
+	PrefixedVolumeSnapshotContentNameKey = csiParameterPrefix + "volumesnapshotcontent/name" // Prefixed VolumeSnapshotContent name key
 
 	// Name of finalizer on VolumeSnapshotContents that are bound by VolumeSnapshots
 	VolumeSnapshotContentFinalizer = "snapshot.storage.kubernetes.io/volumesnapshotcontent-bound-protection"
@@ -115,10 +122,25 @@ var SnapshotterListSecretParams = secretParamsMap{
 	secretNamespaceKey: PrefixedSnapshotterListSecretNamespaceKey,
 }
 
-// ValidateSnapshot performs additional strict validation.
+// ValidateV1Snapshot performs additional strict validation.
 // Do NOT rely on this function to fully validate snapshot objects.
 // This function will only check the additional rules provided by the webhook.
-func ValidateSnapshot(snapshot *crdv1.VolumeSnapshot) error {
+func ValidateV1Snapshot(snapshot *crdv1.VolumeSnapshot) error {
+	if snapshot == nil {
+		return fmt.Errorf("VolumeSnapshot is nil")
+	}
+
+	vscname := snapshot.Spec.VolumeSnapshotClassName
+	if vscname != nil && *vscname == "" {
+		return fmt.Errorf("Spec.VolumeSnapshotClassName must not be the empty string")
+	}
+	return nil
+}
+
+// ValidateV1Beta1Snapshot performs additional strict validation.
+// Do NOT rely on this function to fully validate snapshot objects.
+// This function will only check the additional rules provided by the webhook.
+func ValidateV1Beta1Snapshot(snapshot *crdv1beta1.VolumeSnapshot) error {
 	if snapshot == nil {
 		return fmt.Errorf("VolumeSnapshot is nil")
 	}
@@ -138,10 +160,27 @@ func ValidateSnapshot(snapshot *crdv1.VolumeSnapshot) error {
 	return nil
 }
 
-// ValidateSnapshotContent performs additional strict validation.
+// ValidateV1SnapshotContent performs additional strict validation.
 // Do NOT rely on this function to fully validate snapshot content objects.
 // This function will only check the additional rules provided by the webhook.
-func ValidateSnapshotContent(snapcontent *crdv1.VolumeSnapshotContent) error {
+func ValidateV1SnapshotContent(snapcontent *crdv1.VolumeSnapshotContent) error {
+	if snapcontent == nil {
+		return fmt.Errorf("VolumeSnapshotContent is nil")
+	}
+
+	vsref := snapcontent.Spec.VolumeSnapshotRef
+
+	if vsref.Name == "" || vsref.Namespace == "" {
+		return fmt.Errorf("both Spec.VolumeSnapshotRef.Name = %s and Spec.VolumeSnapshotRef.Namespace = %s must be set", vsref.Name, vsref.Namespace)
+	}
+
+	return nil
+}
+
+// ValidateV1Beta1SnapshotContent performs additional strict validation.
+// Do NOT rely on this function to fully validate snapshot content objects.
+// This function will only check the additional rules provided by the webhook.
+func ValidateV1Beta1SnapshotContent(snapcontent *crdv1beta1.VolumeSnapshotContent) error {
 	if snapcontent == nil {
 		return fmt.Errorf("VolumeSnapshotContent is nil")
 	}
@@ -512,4 +551,9 @@ func IsSnapshotReady(snapshot *crdv1.VolumeSnapshot) bool {
 		return false
 	}
 	return true
+}
+
+// IsSnapshotCreated indicates that the snapshot has been cut on a storage system
+func IsSnapshotCreated(snapshot *crdv1.VolumeSnapshot) bool {
+	return snapshot.Status != nil && snapshot.Status.CreationTime != nil
 }

@@ -20,11 +20,12 @@ import (
 	"fmt"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v3/apis/volumesnapshot/v1beta1"
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned"
-	storageinformers "github.com/kubernetes-csi/external-snapshotter/client/v3/informers/externalversions/volumesnapshot/v1beta1"
-	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v3/listers/volumesnapshot/v1beta1"
-	"github.com/kubernetes-csi/external-snapshotter/v3/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned"
+	storageinformers "github.com/kubernetes-csi/external-snapshotter/client/v4/informers/externalversions/volumesnapshot/v1"
+	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v4/listers/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/metrics"
+	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/utils"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -60,6 +61,8 @@ type csiSnapshotCommonController struct {
 	snapshotStore cache.Store
 	contentStore  cache.Store
 
+	metricsManager metrics.MetricsManager
+
 	resyncPeriod time.Duration
 }
 
@@ -71,6 +74,7 @@ func NewCSISnapshotCommonController(
 	volumeSnapshotContentInformer storageinformers.VolumeSnapshotContentInformer,
 	volumeSnapshotClassInformer storageinformers.VolumeSnapshotClassInformer,
 	pvcInformer coreinformers.PersistentVolumeClaimInformer,
+	metricsManager metrics.MetricsManager,
 	resyncPeriod time.Duration,
 ) *csiSnapshotCommonController {
 	broadcaster := record.NewBroadcaster()
@@ -80,14 +84,15 @@ func NewCSISnapshotCommonController(
 	eventRecorder = broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: fmt.Sprintf("snapshot-controller")})
 
 	ctrl := &csiSnapshotCommonController{
-		clientset:     clientset,
-		client:        client,
-		eventRecorder: eventRecorder,
-		resyncPeriod:  resyncPeriod,
-		snapshotStore: cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
-		contentStore:  cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
-		snapshotQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "snapshot-controller-snapshot"),
-		contentQueue:  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "snapshot-controller-content"),
+		clientset:      clientset,
+		client:         client,
+		eventRecorder:  eventRecorder,
+		resyncPeriod:   resyncPeriod,
+		snapshotStore:  cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
+		contentStore:   cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
+		snapshotQueue:  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "snapshot-controller-snapshot"),
+		contentQueue:   workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "snapshot-controller-content"),
+		metricsManager: metricsManager,
 	}
 
 	ctrl.pvcLister = pvcInformer.Lister()
@@ -329,7 +334,7 @@ func (ctrl *csiSnapshotCommonController) checkAndUpdateSnapshotClass(snapshot *c
 		class, err = ctrl.getSnapshotClass(*className)
 		if err != nil {
 			klog.Errorf("checkAndUpdateSnapshotClass failed to getSnapshotClass %v", err)
-			ctrl.updateSnapshotErrorStatusWithEvent(snapshot, v1.EventTypeWarning, "GetSnapshotClassFailed", fmt.Sprintf("Failed to get snapshot class with error %v", err))
+			ctrl.updateSnapshotErrorStatusWithEvent(snapshot, false, v1.EventTypeWarning, "GetSnapshotClassFailed", fmt.Sprintf("Failed to get snapshot class with error %v", err))
 			// we need to return the original snapshot even if the class isn't found, as it may need to be deleted
 			return newSnapshot, err
 		}
@@ -338,7 +343,7 @@ func (ctrl *csiSnapshotCommonController) checkAndUpdateSnapshotClass(snapshot *c
 		class, newSnapshot, err = ctrl.SetDefaultSnapshotClass(snapshot)
 		if err != nil {
 			klog.Errorf("checkAndUpdateSnapshotClass failed to setDefaultClass %v", err)
-			ctrl.updateSnapshotErrorStatusWithEvent(snapshot, v1.EventTypeWarning, "SetDefaultSnapshotClassFailed", fmt.Sprintf("Failed to set default snapshot class with error %v", err))
+			ctrl.updateSnapshotErrorStatusWithEvent(snapshot, false, v1.EventTypeWarning, "SetDefaultSnapshotClassFailed", fmt.Sprintf("Failed to set default snapshot class with error %v", err))
 			return snapshot, err
 		}
 	}
@@ -363,6 +368,7 @@ func (ctrl *csiSnapshotCommonController) updateSnapshot(snapshot *crdv1.VolumeSn
 	if !newSnapshot {
 		return nil
 	}
+
 	err = ctrl.syncSnapshot(snapshot)
 	if err != nil {
 		if errors.IsConflict(err) {
@@ -407,6 +413,13 @@ func (ctrl *csiSnapshotCommonController) updateContent(content *crdv1.VolumeSnap
 func (ctrl *csiSnapshotCommonController) deleteSnapshot(snapshot *crdv1.VolumeSnapshot) {
 	_ = ctrl.snapshotStore.Delete(snapshot)
 	klog.V(4).Infof("snapshot %q deleted", utils.SnapshotKey(snapshot))
+	driverName, err := ctrl.getSnapshotDriverName(snapshot)
+	if err != nil {
+		klog.Errorf("failed to getSnapshotDriverName while recording metrics for snapshot %q: %s", utils.SnapshotKey(snapshot), err)
+	} else {
+		deleteOperationKey := metrics.NewOperationKey(metrics.DeleteSnapshotOperationName, snapshot.UID)
+		ctrl.metricsManager.RecordMetrics(deleteOperationKey, metrics.NewSnapshotOperationStatus(metrics.SnapshotStatusTypeSuccess), driverName)
+	}
 
 	snapshotContentName := ""
 	if snapshot.Status != nil && snapshot.Status.BoundVolumeSnapshotContentName != nil {
@@ -416,6 +429,7 @@ func (ctrl *csiSnapshotCommonController) deleteSnapshot(snapshot *crdv1.VolumeSn
 		klog.V(5).Infof("deleteSnapshot[%q]: content not bound", utils.SnapshotKey(snapshot))
 		return
 	}
+
 	// sync the content when its snapshot is deleted.  Explicitly sync'ing the
 	// content here in response to snapshot deletion prevents the content from
 	// waiting until the next sync period for its Release.

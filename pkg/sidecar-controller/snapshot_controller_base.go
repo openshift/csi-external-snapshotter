@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v3/apis/volumesnapshot/v1beta1"
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned"
-	storageinformers "github.com/kubernetes-csi/external-snapshotter/client/v3/informers/externalversions/volumesnapshot/v1beta1"
-	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v3/listers/volumesnapshot/v1beta1"
-	"github.com/kubernetes-csi/external-snapshotter/v3/pkg/snapshotter"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned"
+	storageinformers "github.com/kubernetes-csi/external-snapshotter/client/v4/informers/externalversions/volumesnapshot/v1"
+	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v4/listers/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/snapshotter"
 
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -40,11 +40,12 @@ import (
 )
 
 type csiSnapshotSideCarController struct {
-	clientset     clientset.Interface
-	client        kubernetes.Interface
-	driverName    string
-	eventRecorder record.EventRecorder
-	contentQueue  workqueue.RateLimitingInterface
+	clientset           clientset.Interface
+	client              kubernetes.Interface
+	driverName          string
+	eventRecorder       record.EventRecorder
+	contentQueue        workqueue.RateLimitingInterface
+	extraCreateMetadata bool
 
 	contentLister       storagelisters.VolumeSnapshotContentLister
 	contentListerSynced cache.InformerSynced
@@ -70,6 +71,7 @@ func NewCSISnapshotSideCarController(
 	resyncPeriod time.Duration,
 	snapshotNamePrefix string,
 	snapshotNameUUIDLength int,
+	extraCreateMetadata bool,
 ) *csiSnapshotSideCarController {
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartLogging(klog.Infof)
@@ -78,14 +80,15 @@ func NewCSISnapshotSideCarController(
 	eventRecorder = broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: fmt.Sprintf("csi-snapshotter %s", driverName)})
 
 	ctrl := &csiSnapshotSideCarController{
-		clientset:     clientset,
-		client:        client,
-		driverName:    driverName,
-		eventRecorder: eventRecorder,
-		handler:       NewCSIHandler(snapshotter, timeout, snapshotNamePrefix, snapshotNameUUIDLength),
-		resyncPeriod:  resyncPeriod,
-		contentStore:  cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
-		contentQueue:  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "csi-snapshotter-content"),
+		clientset:           clientset,
+		client:              client,
+		driverName:          driverName,
+		eventRecorder:       eventRecorder,
+		handler:             NewCSIHandler(snapshotter, timeout, snapshotNamePrefix, snapshotNameUUIDLength),
+		resyncPeriod:        resyncPeriod,
+		contentStore:        cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
+		contentQueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "csi-snapshotter-content"),
+		extraCreateMetadata: extraCreateMetadata,
 	}
 
 	volumeSnapshotContentInformer.Informer().AddEventHandlerWithResyncPeriod(

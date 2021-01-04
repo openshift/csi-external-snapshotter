@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"testing"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v3/apis/volumesnapshot/v1beta1"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -169,8 +169,10 @@ func TestRemovePrefixedCSIParams(t *testing.T) {
 		{
 			name: "all known prefixed",
 			params: map[string]string{
-				PrefixedSnapshotterSecretNameKey:      "csiBar",
-				PrefixedSnapshotterSecretNamespaceKey: "csiBar",
+				PrefixedSnapshotterSecretNameKey:          "csiBar",
+				PrefixedSnapshotterSecretNamespaceKey:     "csiBar",
+				PrefixedSnapshotterListSecretNameKey:      "csiBar",
+				PrefixedSnapshotterListSecretNamespaceKey: "csiBar",
 			},
 			expectedParams: map[string]string{},
 		},
