@@ -19,8 +19,8 @@ package main
 import (
 	"flag"
 
-	webhook "github.com/kubernetes-csi/external-snapshotter/v3/pkg/validation-webhook"
-	"k8s.io/klog"
+	webhook "github.com/kubernetes-csi/external-snapshotter/v4/pkg/validation-webhook"
+	"k8s.io/klog/v2"
 )
 
 func main() {

@@ -20,6 +20,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -38,12 +39,12 @@ import (
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	"github.com/kubernetes-csi/csi-lib-utils/metrics"
 	csirpc "github.com/kubernetes-csi/csi-lib-utils/rpc"
-	controller "github.com/kubernetes-csi/external-snapshotter/v3/pkg/sidecar-controller"
-	"github.com/kubernetes-csi/external-snapshotter/v3/pkg/snapshotter"
+	controller "github.com/kubernetes-csi/external-snapshotter/v4/pkg/sidecar-controller"
+	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/snapshotter"
 
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned"
-	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v3/clientset/versioned/scheme"
-	informers "github.com/kubernetes-csi/external-snapshotter/client/v3/informers/externalversions"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned"
+	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned/scheme"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v4/informers/externalversions"
 	coreinformers "k8s.io/client-go/informers"
 )
 
@@ -56,17 +57,19 @@ const (
 var (
 	kubeconfig             = flag.String("kubeconfig", "", "Absolute path to the kubeconfig file. Required only when running out of cluster.")
 	csiAddress             = flag.String("csi-address", "/run/csi/socket", "Address of the CSI driver socket.")
-	resyncPeriod           = flag.Duration("resync-period", 60*time.Second, "Resync interval of the controller.")
+	resyncPeriod           = flag.Duration("resync-period", 15*time.Minute, "Resync interval of the controller.")
 	snapshotNamePrefix     = flag.String("snapshot-name-prefix", "snapshot", "Prefix to apply to the name of a created snapshot")
 	snapshotNameUUIDLength = flag.Int("snapshot-name-uuid-length", -1, "Length in characters for the generated uuid of a created snapshot. Defaults behavior is to NOT truncate.")
 	showVersion            = flag.Bool("version", false, "Show version.")
 	threads                = flag.Int("worker-threads", 10, "Number of worker threads.")
 	csiTimeout             = flag.Duration("timeout", defaultCSITimeout, "The timeout for any RPCs to the CSI driver. Default is 1 minute.")
+	extraCreateMetadata    = flag.Bool("extra-create-metadata", false, "If set, add snapshot metadata to plugin snapshot requests as parameters.")
 
 	leaderElection          = flag.Bool("leader-election", false, "Enables leader election.")
 	leaderElectionNamespace = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Defaults to the pod namespace if not set.")
 
-	metricsAddress = flag.String("metrics-address", "", "The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled.")
+	metricsAddress = flag.String("metrics-address", "", "(deprecated) The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled. Only one of `--metrics-address` and `--http-endpoint` can be set.")
+	httpEndpoint   = flag.String("http-endpoint", "", "The TCP network address where the HTTP server for diagnostics, including metrics and leader election health check, will listen (example: `:8080`). The default is empty string, which means the server is disabled. Only one of `--metrics-address` and `--http-endpoint` can be set.")
 	metricsPath    = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
 )
 
@@ -111,6 +114,15 @@ func main() {
 	// Add Snapshot types to the default Kubernetes so events can be logged for them
 	snapshotscheme.AddToScheme(scheme.Scheme)
 
+	if *metricsAddress != "" && *httpEndpoint != "" {
+		klog.Error("only one of `--metrics-address` and `--http-endpoint` can be set.")
+		os.Exit(1)
+	}
+	addr := *metricsAddress
+	if addr == "" {
+		addr = *httpEndpoint
+	}
+
 	// Connect to CSI.
 	metricsManager := metrics.NewCSIMetricsManager("" /* driverName */)
 	csiConn, err := connection.Connect(
@@ -134,8 +146,20 @@ func main() {
 	}
 
 	klog.V(2).Infof("CSI driver name: %q", driverName)
-	metricsManager.SetDriverName(driverName)
-	metricsManager.StartMetricsEndpoint(*metricsAddress, *metricsPath)
+
+	// Prepare http endpoint for metrics + leader election healthz
+	mux := http.NewServeMux()
+	if addr != "" {
+		metricsManager.RegisterToServer(mux, *metricsPath)
+		metricsManager.SetDriverName(driverName)
+		go func() {
+			klog.Infof("ServeMux listening at %q", addr)
+			err := http.ListenAndServe(*metricsAddress, mux)
+			if err != nil {
+				klog.Fatalf("Failed to start HTTP server at specified address (%q) and metrics path (%q): %s", addr, *metricsPath, err)
+			}
+		}()
+	}
 
 	// Check it's ready
 	if err = csirpc.ProbeForever(csiConn, *csiTimeout); err != nil {
@@ -166,13 +190,14 @@ func main() {
 		snapClient,
 		kubeClient,
 		driverName,
-		factory.Snapshot().V1beta1().VolumeSnapshotContents(),
-		factory.Snapshot().V1beta1().VolumeSnapshotClasses(),
+		factory.Snapshot().V1().VolumeSnapshotContents(),
+		factory.Snapshot().V1().VolumeSnapshotClasses(),
 		snapShotter,
 		*csiTimeout,
 		*resyncPeriod,
 		*snapshotNamePrefix,
 		*snapshotNameUUIDLength,
+		*extraCreateMetadata,
 	)
 
 	run := func(context.Context) {
@@ -200,6 +225,10 @@ func main() {
 			klog.Fatalf("failed to create leaderelection client: %v", err)
 		}
 		le := leaderelection.NewLeaderElection(leClientset, lockName, run)
+		if *httpEndpoint != "" {
+			le.PrepareHealthCheck(mux, leaderelection.DefaultHealthCheckTimeout)
+		}
+
 		if *leaderElectionNamespace != "" {
 			le.WithNamespace(*leaderElectionNamespace)
 		}
