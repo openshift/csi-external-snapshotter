@@ -300,9 +300,9 @@ func (ctrl *csiSnapshotSideCarController) createSnapshotWrapper(content *crdv1.V
 		// storage system has responded with an error
 		klog.Infof("createSnapshotWrapper: CreateSnapshot for content %s returned error: %v", content.Name, err)
 		if isCSIFinalError(err) {
-			err = ctrl.removeAnnVolumeSnapshotBeingCreated(content)
-			if err != nil {
-				return nil, fmt.Errorf("failed to remove VolumeSnapshotBeingCreated annotation from the content %s: %q", content.Name, err)
+			removeAnnotationErr := ctrl.removeAnnVolumeSnapshotBeingCreated(content)
+			if removeAnnotationErr != nil {
+				return nil, fmt.Errorf("failed to remove VolumeSnapshotBeingCreated annotation from the content %s: %q", content.Name, removeAnnotationErr)
 			}
 		}
 
