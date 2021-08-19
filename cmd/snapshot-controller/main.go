@@ -20,6 +20,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -29,6 +31,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/workqueue"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -52,11 +55,16 @@ var (
 	showVersion  = flag.Bool("version", false, "Show version.")
 	threads      = flag.Int("worker-threads", 10, "Number of worker threads.")
 
-	leaderElection          = flag.Bool("leader-election", false, "Enables leader election.")
-	leaderElectionNamespace = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Defaults to the pod namespace if not set.")
+	leaderElection              = flag.Bool("leader-election", false, "Enables leader election.")
+	leaderElectionNamespace     = flag.String("leader-election-namespace", "", "The namespace where the leader election resource exists. Defaults to the pod namespace if not set.")
+	leaderElectionLeaseDuration = flag.Duration("leader-election-lease-duration", 15*time.Second, "Duration, in seconds, that non-leader candidates will wait to force acquire leadership. Defaults to 15 seconds.")
+	leaderElectionRenewDeadline = flag.Duration("leader-election-renew-deadline", 10*time.Second, "Duration, in seconds, that the acting leader will retry refreshing leadership before giving up. Defaults to 10 seconds.")
+	leaderElectionRetryPeriod   = flag.Duration("leader-election-retry-period", 5*time.Second, "Duration, in seconds, the LeaderElector clients should wait between tries of actions. Defaults to 5 seconds.")
 
-	httpEndpoint = flag.String("http-endpoint", "", "The TCP network address where the HTTP server for diagnostics, including metrics, will listen (example: :8080). The default is empty string, which means the server is disabled.")
-	metricsPath  = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
+	httpEndpoint       = flag.String("http-endpoint", "", "The TCP network address where the HTTP server for diagnostics, including metrics, will listen (example: :8080). The default is empty string, which means the server is disabled.")
+	metricsPath        = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
+	retryIntervalStart = flag.Duration("retry-interval-start", time.Second, "Initial retry interval of failed volume snapshot creation or deletion. It doubles with each failure, up to retry-interval-max. Default is 1 second.")
+	retryIntervalMax   = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval of failed volume snapshot creation or deletion. Default is 5 minutes.")
 )
 
 var (
@@ -64,18 +72,17 @@ var (
 )
 
 // Checks that the VolumeSnapshot v1 CRDs exist.
-func ensureCustomResourceDefinitionsExist(kubeClient *kubernetes.Clientset, client *clientset.Clientset) error {
+func ensureCustomResourceDefinitionsExist(client *clientset.Clientset) error {
 	condition := func() (bool, error) {
 		var err error
-		_, err = kubeClient.CoreV1().Namespaces().Get(context.TODO(), "kube-system", metav1.GetOptions{})
-		if err == nil {
-			// only execute list VolumeSnapshots if the kube-system namespace exists
-			_, err = client.SnapshotV1().VolumeSnapshots("kube-system").List(context.TODO(), metav1.ListOptions{})
-			if err != nil {
-				klog.Errorf("Failed to list v1 volumesnapshots with error=%+v", err)
-				return false, nil
-			}
+
+		// scoping to an empty namespace makes `List` work across all namespaces
+		_, err = client.SnapshotV1().VolumeSnapshots("").List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			klog.Errorf("Failed to list v1 volumesnapshots with error=%+v", err)
+			return false, nil
 		}
+
 		_, err = client.SnapshotV1().VolumeSnapshotClasses().List(context.TODO(), metav1.ListOptions{})
 		if err != nil {
 			klog.Errorf("Failed to list v1 volumesnapshotclasses with error=%+v", err)
@@ -138,23 +145,15 @@ func main() {
 	// Create and register metrics manager
 	metricsManager := metrics.NewMetricsManager()
 	wg := &sync.WaitGroup{}
-	wg.Add(1)
+
+	mux := http.NewServeMux()
 	if *httpEndpoint != "" {
-		srv, err := metricsManager.StartMetricsEndpoint(*metricsPath, *httpEndpoint, promklog{}, wg)
+		err := metricsManager.PrepareMetricsPath(mux, *metricsPath, promklog{})
 		if err != nil {
-			klog.Errorf("Failed to start metrics server: %s", err.Error())
+			klog.Errorf("Failed to prepare metrics path: %s", err.Error())
 			os.Exit(1)
 		}
-		defer func() {
-			err := srv.Shutdown(context.Background())
-			if err != nil {
-				klog.Errorf("Failed to shutdown metrics server: %s", err.Error())
-			}
-
-			klog.Infof("Metrics server successfully shutdown")
-			wg.Done()
-		}()
-		klog.Infof("Metrics server successfully started on %s, %s", *httpEndpoint, *metricsPath)
+		klog.Infof("Metrics path successfully registered at %s", *metricsPath)
 	}
 
 	// Add Snapshot types to the default Kubernetes so events can be logged for them
@@ -171,9 +170,11 @@ func main() {
 		coreFactory.Core().V1().PersistentVolumeClaims(),
 		metricsManager,
 		*resyncPeriod,
+		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
+		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
 	)
 
-	if err := ensureCustomResourceDefinitionsExist(kubeClient, snapClient); err != nil {
+	if err := ensureCustomResourceDefinitionsExist(snapClient); err != nil {
 		klog.Errorf("Exiting due to failure to ensure CRDs exist during startup: %+v", err)
 		os.Exit(1)
 	}
@@ -192,6 +193,32 @@ func main() {
 		close(stopCh)
 	}
 
+	// start listening & serving http endpoint if set
+	if *httpEndpoint != "" {
+		l, err := net.Listen("tcp", *httpEndpoint)
+		if err != nil {
+			klog.Fatalf("failed to listen on address[%s], error[%v]", *httpEndpoint, err)
+		}
+		srv := &http.Server{Addr: l.Addr().String(), Handler: mux}
+		go func() {
+			defer wg.Done()
+			if err := srv.Serve(l); err != http.ErrServerClosed {
+				klog.Fatalf("failed to start endpoint at:%s/%s, error: %v", *httpEndpoint, *metricsPath, err)
+			}
+		}()
+		klog.Infof("Metrics http server successfully started on %s, %s", *httpEndpoint, *metricsPath)
+
+		defer func() {
+			err := srv.Shutdown(context.Background())
+			if err != nil {
+				klog.Errorf("Failed to shutdown metrics server: %s", err.Error())
+			}
+
+			klog.Infof("Metrics server successfully shutdown")
+			wg.Done()
+		}()
+	}
+
 	if !*leaderElection {
 		run(context.TODO())
 	} else {
@@ -203,9 +230,16 @@ func main() {
 			klog.Fatalf("failed to create leaderelection client: %v", err)
 		}
 		le := leaderelection.NewLeaderElection(leClientset, lockName, run)
+		if *httpEndpoint != "" {
+			le.PrepareHealthCheck(mux, leaderelection.DefaultHealthCheckTimeout)
+		}
+
 		if *leaderElectionNamespace != "" {
 			le.WithNamespace(*leaderElectionNamespace)
 		}
+		le.WithLeaseDuration(*leaderElectionLeaseDuration)
+		le.WithRenewDeadline(*leaderElectionRenewDeadline)
+		le.WithRetryPeriod(*leaderElectionRetryPeriod)
 		if err := le.Run(); err != nil {
 			klog.Fatalf("failed to initialize leader election: %v", err)
 		}

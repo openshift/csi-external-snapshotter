@@ -22,6 +22,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"reflect"
 	"sort"
@@ -44,8 +45,9 @@ var (
 )
 
 const (
-	httpPattern = "/metrics"
-	addr        = "localhost:0"
+	httpPattern            = "/metrics"
+	addr                   = "localhost:0"
+	processStartTimeMetric = "process_start_time_seconds"
 )
 
 type fakeOpStatus struct {
@@ -59,35 +61,44 @@ func (s *fakeOpStatus) String() string {
 	return "Unknown"
 }
 
-func initMgr() (MetricsManager, *sync.WaitGroup, *http.Server) {
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
+func initMgr() (MetricsManager, *http.Server) {
 	mgr := NewMetricsManager()
-	srv, err := mgr.StartMetricsEndpoint(httpPattern, addr, nil, wg)
+	mux := http.NewServeMux()
+	err := mgr.PrepareMetricsPath(mux, httpPattern, nil)
 	if err != nil {
 		log.Fatalf("failed to start serving [%v]", err)
 	}
-	return mgr, wg, srv
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("failed to listen on address[%s], error[%v]", addr, err)
+	}
+	srv := &http.Server{Addr: l.Addr().String(), Handler: mux}
+	go func() {
+		if err := srv.Serve(l); err != http.ErrServerClosed {
+			log.Fatalf("failed to start endpoint at:%s/%s, error: %v", addr, httpPattern, err)
+		}
+	}()
+
+	return mgr, srv
 }
 
-func shutdown(srv *http.Server, wg *sync.WaitGroup) {
+func shutdown(srv *http.Server) {
 	if err := srv.Shutdown(context.Background()); err != nil {
 		panic(err)
 	}
-	wg.Wait()
 }
 
 func TestNew(t *testing.T) {
-	mgr, wg, srv := initMgr()
-	defer shutdown(srv, wg)
+	mgr, srv := initMgr()
+	defer shutdown(srv)
 	if mgr == nil {
 		t.Errorf("failed testing new")
 	}
 }
 
 func TestDropNonExistingOperation(t *testing.T) {
-	mgr, wg, srv := initMgr()
-	defer shutdown(srv, wg)
+	mgr, srv := initMgr()
+	defer shutdown(srv)
 	op := OperationKey{
 		Name:       "drop-non-existing-operation-should-be-noop",
 		ResourceID: types.UID("uid"),
@@ -96,9 +107,9 @@ func TestDropNonExistingOperation(t *testing.T) {
 }
 
 func TestRecordMetricsForNonExistingOperation(t *testing.T) {
-	mgr, wg, srv := initMgr()
+	mgr, srv := initMgr()
 	srvAddr := "http://" + srv.Addr + httpPattern
-	defer shutdown(srv, wg)
+	defer shutdown(srv)
 	opKey := OperationKey{
 		Name:       "no-metrics-should-be-recorded-as-operation-did-not-start",
 		ResourceID: types.UID("uid"),
@@ -118,9 +129,9 @@ func TestRecordMetricsForNonExistingOperation(t *testing.T) {
 }
 
 func TestDropOperation(t *testing.T) {
-	mgr, wg, srv := initMgr()
+	mgr, srv := initMgr()
 	srvAddr := "http://" + srv.Addr + httpPattern
-	defer shutdown(srv, wg)
+	defer shutdown(srv)
 	opKey := OperationKey{
 		Name:       "should-have-been-dropped",
 		ResourceID: types.UID("uid"),
@@ -175,9 +186,9 @@ snapshot_controller_operation_total_seconds_count{driver_name="driver",operation
 }
 
 func TestUnknownStatus(t *testing.T) {
-	mgr, wg, srv := initMgr()
+	mgr, srv := initMgr()
 	srvAddr := "http://" + srv.Addr + httpPattern
-	defer shutdown(srv, wg)
+	defer shutdown(srv)
 	opKey := OperationKey{
 		Name:       "unknown-status-operation",
 		ResourceID: types.UID("uid"),
@@ -213,9 +224,9 @@ snapshot_controller_operation_total_seconds_count{driver_name="driver",operation
 }
 
 func TestRecordMetrics(t *testing.T) {
-	mgr, wg, srv := initMgr()
+	mgr, srv := initMgr()
 	srvAddr := "http://" + srv.Addr + httpPattern
-	defer shutdown(srv, wg)
+	defer shutdown(srv)
 	// add an operation
 	opKey := OperationKey{
 		Name:       "op1",
@@ -283,9 +294,9 @@ snapshot_controller_operation_total_seconds_count{driver_name="driver2",operatio
 }
 
 func TestConcurrency(t *testing.T) {
-	mgr, wg, srv := initMgr()
+	mgr, srv := initMgr()
 	srvAddr := "http://" + srv.Addr + httpPattern
-	defer shutdown(srv, wg)
+	defer shutdown(srv)
 	success := &fakeOpStatus{
 		statusCode: 0,
 	}
@@ -478,6 +489,83 @@ snapshot_controller_operation_total_seconds_count{driver_name="driver5",operatio
 	}
 }
 
+func TestInFlightMetric(t *testing.T) {
+	inFlightCheckInterval = time.Millisecond * 50
+
+	mgr, srv := initMgr()
+	defer shutdown(srv)
+	srvAddr := "http://" + srv.Addr + httpPattern
+
+	//  Start first operation, should be 1
+	opKey := OperationKey{
+		Name:       "leaked",
+		ResourceID: types.UID("uid"),
+	}
+	opVal := NewOperationValue("driver", "test")
+	mgr.OperationStart(opKey, opVal)
+	time.Sleep(500 * time.Millisecond)
+
+	if err := verifyInFlightMetric(`snapshot_controller_operations_in_flight 1`, srvAddr); err != nil {
+		t.Errorf("failed testing [%v]", err)
+	}
+
+	//  Start second operation, should be 2
+	opKey = OperationKey{
+		Name:       "leaked2",
+		ResourceID: types.UID("uid"),
+	}
+	opVal = NewOperationValue("driver2", "test2")
+	mgr.OperationStart(opKey, opVal)
+	time.Sleep(500 * time.Millisecond)
+
+	if err := verifyInFlightMetric(`snapshot_controller_operations_in_flight 2`, srvAddr); err != nil {
+		t.Errorf("failed testing [%v]", err)
+	}
+
+	//  Record, should be down to 1
+	mgr.RecordMetrics(opKey, nil, "driver")
+	time.Sleep(500 * time.Millisecond)
+
+	if err := verifyInFlightMetric(`snapshot_controller_operations_in_flight 1`, srvAddr); err != nil {
+		t.Errorf("failed testing [%v]", err)
+	}
+
+	//  Start 50 operations, should be 51
+	for i := 0; i < 50; i++ {
+		opKey := OperationKey{
+			Name:       fmt.Sprintf("op%d", i),
+			ResourceID: types.UID("uid%d"),
+		}
+		opVal := NewOperationValue("driver1", "test")
+		mgr.OperationStart(opKey, opVal)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	if err := verifyInFlightMetric(`snapshot_controller_operations_in_flight 51`, srvAddr); err != nil {
+		t.Errorf("failed testing [%v]", err)
+	}
+}
+
+func verifyInFlightMetric(expected string, srvAddr string) error {
+	rsp, err := http.Get(srvAddr)
+	if err != nil {
+		return err
+	}
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to get response from serve: %s", http.StatusText(rsp.StatusCode))
+	}
+	r, err := ioutil.ReadAll(rsp.Body)
+	if err != nil {
+		return err
+	}
+
+	if !strings.Contains(string(r), expected) {
+		return fmt.Errorf("failed, not equal")
+	}
+
+	return nil
+}
+
 func verifyMetric(expected, srvAddr string) error {
 	rsp, err := http.Get(srvAddr)
 	if err != nil {
@@ -490,6 +578,7 @@ func verifyMetric(expected, srvAddr string) error {
 	if err != nil {
 		return err
 	}
+
 	format := expfmt.ResponseFormat(rsp.Header)
 	gotReader := strings.NewReader(string(r))
 	gotDecoder := expfmt.NewDecoder(gotReader, format)
@@ -628,4 +717,25 @@ func containsMetrics(expectedMfs, gotMfs []*cmg.MetricFamily) bool {
 	}
 
 	return true
+}
+
+func TestProcessStartTimeMetricExist(t *testing.T) {
+	mgr, srv := initMgr()
+	defer shutdown(srv)
+	metricsFamilies, err := mgr.GetRegistry().Gather()
+	if err != nil {
+		t.Fatalf("Error fetching metrics: %v", err)
+	}
+
+	for _, metricsFamily := range metricsFamilies {
+		if metricsFamily.GetName() == processStartTimeMetric {
+			return
+		}
+		m := metricsFamily.GetMetric()
+		if m[0].GetGauge().GetValue() <= 0 {
+			t.Fatalf("Expected non zero timestamp for process start time")
+		}
+	}
+
+	t.Fatalf("Metrics does not contain %v. Scraped content: %v", processStartTimeMetric, metricsFamilies)
 }
