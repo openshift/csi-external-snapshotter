@@ -1,10 +1,8 @@
-[![Build Status](https://travis-ci.org/kubernetes-csi/external-snapshotter.svg?branch=master)](https://travis-ci.org/kubernetes-csi/external-snapshotter)
-
 # CSI Snapshotter
 
 The CSI snapshotter is part of Kubernetes implementation of [Container Storage Interface (CSI)](https://github.com/container-storage-interface/spec).
 
-The volume snapshot feature supports CSI v1.0 and higher. It was introduced as an Alpha feature in Kubernetes v1.12 and has been promoted to an Beta feature in Kubernetes 1.17. In Kubernetes 1.20, the volume snapshot feature moves to GA.
+The volume snapshot feature supports CSI v1.0 and higher. It was introduced as an Alpha feature in Kubernetes v1.12 and has been promoted to a Beta feature in Kubernetes 1.17. In Kubernetes 1.20, the volume snapshot feature moves to GA.
 
 > :warning: **WARNING**: There is a new validating webhook server which provides tightened validation on snapshot objects. This SHOULD be installed by all users of this feature. More details [below](#validating-webhook).
 
@@ -22,9 +20,9 @@ This information reflects the head of this branch.
 
 | Minimum CSI Version                                                                | Recommended CSI Version                                                                | Container Image             | [Min K8s Version](https://kubernetes-csi.github.io/docs/kubernetes-compatibility.html#minimum-version) | [Recommended K8s Version](https://kubernetes-csi.github.io/docs/project-policies.html#recommended-version) |
 | ------------------------------------------------------------------------------------------ | ----------------------------| --------------- | --------------- |  --------------- |
-| [CSI Spec v1.0.0](https://github.com/container-storage-interface/spec/releases/tag/v1.0.0) | [CSI Spec v1.4.0](https://github.com/container-storage-interface/spec/releases/tag/v1.4.0) | k8s.gcr.io/sig-storage/csi-snapshotter | 1.20         | 1.20         |
-| [CSI Spec v1.0.0](https://github.com/container-storage-interface/spec/releases/tag/v1.0.0) | [CSI Spec v1.4.0](https://github.com/container-storage-interface/spec/releases/tag/v1.4.0) | k8s.gcr.io/sig-storage/snapshot-controller  | 1.20     | 1.20         |
-| [CSI Spec v1.0.0](https://github.com/container-storage-interface/spec/releases/tag/v1.0.0) | [CSI Spec v1.4.0](https://github.com/container-storage-interface/spec/releases/tag/v1.4.0) | k8s.gcr.io/sig-storage/snapshot-validation-webhook  | 1.20     | 1.20         |
+| [CSI Spec v1.0.0](https://github.com/container-storage-interface/spec/releases/tag/v1.0.0) | [CSI Spec v1.5.0](https://github.com/container-storage-interface/spec/releases/tag/v1.5.0) | k8s.gcr.io/sig-storage/csi-snapshotter | 1.20         | 1.20         |
+| [CSI Spec v1.0.0](https://github.com/container-storage-interface/spec/releases/tag/v1.0.0) | [CSI Spec v1.5.0](https://github.com/container-storage-interface/spec/releases/tag/v1.5.0) | k8s.gcr.io/sig-storage/snapshot-controller  | 1.20     | 1.20         |
+| [CSI Spec v1.0.0](https://github.com/container-storage-interface/spec/releases/tag/v1.0.0) | [CSI Spec v1.5.0](https://github.com/container-storage-interface/spec/releases/tag/v1.5.0) | k8s.gcr.io/sig-storage/snapshot-validation-webhook  | 1.20     | 1.20         |
 
 Note: snapshot-controller, snapshot-validation-webhook, csi-snapshotter v4.1 requires v1 snapshot CRDs to be installed, but it serves both v1 and v1beta1 snapshot objects. Storage version is changed from v1beta1 to v1 in 4.1.0 so v1beta1 is deprecated and will be removed in a future release.
 
@@ -63,7 +61,7 @@ If your Kubernetes distribution does not bundle the snapshot controller, you may
 
 There is a new validating webhook server which provides tightened validation on snapshot objects. The cluster admin or Kubernetes distribution admin should install the webhook alongside the snapshot controllers and CRDs. More details [below](#validating-webhook).
 
-Install Snapshot Beta CRDs:
+Install Snapshot CRDs:
 * kubectl create -f client/config/crd
 * https://github.com/kubernetes-csi/external-snapshotter/tree/master/client/config/crd
 * Do this once per cluster
@@ -96,7 +94,7 @@ If there are no existing invalid v1beta1 objects, after upgrading to v1, the web
 
 If there are existing invalid v1beta1 objects, the user should make sure that the snapshot controller is upgraded to v3.0.0 or higher (v3.0.3 is the latest recommended v3.0.x release) and install the corresponding validation webhook before upgrading to v1 so that those invalid objects will be labeled and can be identified easily and removed before upgrading to v1.
 
-If there are existing invalid v1beta1 objects and the user didn't upgrade to the snapshot controller 3.0.0 or higher and install the corresponding validation webhook before upgrading to v1, those existing invalid v1beta1 objects will not be labeled by the snapshot controller.
+If there are existing invalid v1beta1 objects, and the user didn't upgrade to the snapshot controller 3.0.0 or higher and install the corresponding validation webhook before upgrading to v1, those existing invalid v1beta1 objects will not be labeled by the snapshot controller.
 
 So the recommendation is that before upgrading to v1 CRDs and upgrading snapshot controller and validation webhook to v4.0, the user should upgrade to the snapshot controller 3.0.0 and higher (v3.0.3 is the latest recommended version for 3.0.x) and install the corresponding validation webhook so that all existing invalid objects will be labeled and can be easily identified and deleted.
 
@@ -119,13 +117,21 @@ Read more about how to install the example webhook [here](deploy/kubernetes/webh
 
 * `--leader-election-namespace <namespace>`: The namespace where the leader election resource exists. Defaults to the pod namespace if not set.
 
-* `--http-endpoint`: The TCP network address where the HTTP server for diagnostics, including metrics and leader election health check, will listen (example: `:8080` which corresponds to port 8080 on local host). The default is empty string, which means the server is disabled.
+* `--leader-election-lease-duration <duration>`: Duration, in seconds, that non-leader candidates will wait to force acquire leadership. Defaults to 15 seconds.
 
-* `--metrics-address`: (deprecated) The TCP network address where the prometheus metrics endpoint will run (example: `:8080` which corresponds to port 8080 on local host). The default is empty string, which means metrics endpoint is disabled.
+* `--leader-election-renew-deadline <duration>`: Duration, in seconds, that the acting leader will retry refreshing leadership before giving up. Defaults to 10 seconds.
+
+* `--leader-election-retry-period <duration>`: Duration, in seconds, the LeaderElector clients should wait between tries of actions. Defaults to 5 seconds.
+
+* `--http-endpoint`: The TCP network address where the HTTP server for diagnostics, including metrics and leader election health check, will listen (example: `:8080` which corresponds to port 8080 on local host). The default is empty string, which means the server is disabled.
 
 * `--metrics-path`: The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.
 
 * `--worker-threads`: Number of worker threads. Default value is 10.
+
+* `--retry-interval-start`: Initial retry interval of failed volume snapshot creation or deletion. It doubles with each failure, up to retry-interval-max. Default value is 1 second.
+
+*`--retry-interval-max`: Maximum retry interval of failed volume snapshot creation or deletion. Default value is 5 minutes.
 
 #### Other recognized arguments
 * `--kubeconfig <path>`: Path to Kubernetes client configuration that the snapshot controller uses to connect to Kubernetes API server. When omitted, default token provided by Kubernetes will be used. This option is useful only when the snapshot controller does not run as a Kubernetes pod, e.g. for debugging.
@@ -145,6 +151,12 @@ Read more about how to install the example webhook [here](deploy/kubernetes/webh
 
 * `--leader-election-namespace <namespace>`: The namespace where the leader election resource exists. Defaults to the pod namespace if not set.
 
+* `--leader-election-lease-duration <duration>`: Duration, in seconds, that non-leader candidates will wait to force acquire leadership. Defaults to 15 seconds.
+
+* `--leader-election-renew-deadline <duration>`: Duration, in seconds, that the acting leader will retry refreshing leadership before giving up. Defaults to 10 seconds.
+
+* `--leader-election-retry-period <duration>`: Duration, in seconds, the LeaderElector clients should wait between tries of actions. Defaults to 5 seconds.
+
 * `--timeout <duration>`: Timeout of all calls to CSI driver. It should be set to value that accommodates majority of `CreateSnapshot`, `DeleteSnapshot`, and `ListSnapshots` calls. 1 minute is used by default.
 
 * `snapshot-name-prefix`: Prefix to apply to the name of a created snapshot. Default is `snapshot`.
@@ -153,6 +165,9 @@ Read more about how to install the example webhook [here](deploy/kubernetes/webh
 
 * `--worker-threads`: Number of worker threads for running create snapshot and delete snapshot operations. Default value is 10.
 
+* `--retry-interval-start`: Initial retry interval of failed volume snapshot creation or deletion. It doubles with each failure, up to retry-interval-max. Default value is 1 second.
+
+*`--retry-interval-max`: Maximum retry interval of failed volume snapshot creation or deletion. Default value is 5 minutes.
 #### Other recognized arguments
 * `--kubeconfig <path>`: Path to Kubernetes client configuration that the CSI external-snapshotter uses to connect to Kubernetes API server. When omitted, default token provided by Kubernetes will be used. This option is useful only when the external-snapshotter does not run as a Kubernetes pod, e.g. for debugging.
 

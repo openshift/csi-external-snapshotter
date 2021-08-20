@@ -26,7 +26,7 @@ import (
 	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v4/listers/volumesnapshot/v1"
 	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/snapshotter"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -72,6 +72,7 @@ func NewCSISnapshotSideCarController(
 	snapshotNamePrefix string,
 	snapshotNameUUIDLength int,
 	extraCreateMetadata bool,
+	contentRateLimiter workqueue.RateLimiter,
 ) *csiSnapshotSideCarController {
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartLogging(klog.Infof)
@@ -87,7 +88,7 @@ func NewCSISnapshotSideCarController(
 		handler:             NewCSIHandler(snapshotter, timeout, snapshotNamePrefix, snapshotNameUUIDLength),
 		resyncPeriod:        resyncPeriod,
 		contentStore:        cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
-		contentQueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "csi-snapshotter-content"),
+		contentQueue:        workqueue.NewNamedRateLimitingQueue(contentRateLimiter, "csi-snapshotter-content"),
 		extraCreateMetadata: extraCreateMetadata,
 	}
 
