@@ -84,7 +84,7 @@ spec:
             - name: socket-dir
               mountPath: /csi
         - name: csi-snapshotter
-          image: k8s.gcr.io/sig-storage/csi-snapshotter:v4.2.0
+          image: gcr.io/k8s-staging-sig-storage/csi-snapshotter:v5.0.0
           args:
             - "--v=5"
             - "--csi-address=$(ADDRESS)"
@@ -101,11 +101,11 @@ spec:
           args:
             - "--v=5"
             - "--endpoint=$(CSI_ENDPOINT)"
-            - "--nodeid=$(KUBE_NODE_NAME)"
+            - "--nodeid=$(NODE_NAME)"
           env:
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
-            - name: KUBE_NODE_NAME
+            - name: NODE_NAME
               valueFrom:
                 fieldRef:
                   apiVersion: v1
@@ -118,4 +118,4 @@ spec:
               mountPath: /csi
       volumes:
         - name: socket-dir
-          emptyDir:
+          emptyDir: {}
