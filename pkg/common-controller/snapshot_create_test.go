@@ -21,23 +21,27 @@ import (
 	"testing"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-var timeNow = time.Now()
-var timeNowStamp = timeNow.UnixNano()
-var False = false
-var True = true
+var (
+	timeNow      = time.Now()
+	timeNowStamp = timeNow.UnixNano()
+	False        = false
+	True         = true
+)
 
 var metaTimeNowUnix = &metav1.Time{
 	Time: timeNow,
 }
 
-var defaultSize int64 = 1000
-var deletePolicy = crdv1.VolumeSnapshotContentDelete
-var retainPolicy = crdv1.VolumeSnapshotContentRetain
+var (
+	defaultSize  int64 = 1000
+	deletePolicy       = crdv1.VolumeSnapshotContentDelete
+	retainPolicy       = crdv1.VolumeSnapshotContentRetain
+)
 
 // Test single call to SyncSnapshot, expecting create snapshot to happen.
 // 1. Fill in the controller with initial data

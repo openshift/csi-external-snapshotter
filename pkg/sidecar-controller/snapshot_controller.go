@@ -22,8 +22,8 @@ import (
 	"strings"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/utils"
 	codes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
@@ -233,7 +233,7 @@ func (ctrl *csiSnapshotSideCarController) checkandUpdateContentStatusOperation(c
 	var err error
 	var creationTime time.Time
 	var size int64
-	var readyToUse = false
+	readyToUse := false
 	var driverName string
 	var snapshotID string
 	var snapshotterListCredentials map[string]string
@@ -283,7 +283,6 @@ func (ctrl *csiSnapshotSideCarController) checkandUpdateContentStatusOperation(c
 		return updatedContent, nil
 	}
 	return ctrl.createSnapshotWrapper(content)
-
 }
 
 // This is a wrapper function for the snapshot creation process.

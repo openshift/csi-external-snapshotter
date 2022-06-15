@@ -24,15 +24,14 @@ SCRIPT_ROOT=$(unset CDPATH && cd $(dirname "${BASH_SOURCE[0]}")/.. && pwd)
 # --output-base    because this script should also be able to run inside the vendor dir of
 #                  k8s.io/kubernetes. The output-base is needed for the generators to output into the vendor dir
 #                  instead of the $GOPATH directly. For normal projects this can be dropped.
-# We should only be generating code for v1 now, while keeping the existing generated code for v1beta1
 ${GOPATH}/src/k8s.io/code-generator/generate-groups.sh "deepcopy,client,informer,lister" \
-  github.com/kubernetes-csi/external-snapshotter/client/v4 github.com/kubernetes-csi/external-snapshotter/client/v4/apis \
-  volumesnapshot:v1beta1,v1 \
+  github.com/kubernetes-csi/external-snapshotter/client/v6 github.com/kubernetes-csi/external-snapshotter/client/v6/apis \
+  volumesnapshot:v1 \
   --go-header-file ${SCRIPT_ROOT}/hack/boilerplate.go.txt
 
 # To use your own boilerplate text use:
 #   --go-header-file ${SCRIPT_ROOT}/hack/custom-boilerplate.go.txt
 
-# Move generated file from client/v4 to client folder and remove client/v4
-cp -rf v4/. .
-rm -rf v4
+# Move generated file from client/v6 to client folder and remove client/v6
+cp -rf v6/. .
+rm -rf v6

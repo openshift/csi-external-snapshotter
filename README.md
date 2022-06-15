@@ -109,6 +109,30 @@ Read more about how to install the example webhook [here](deploy/kubernetes/webh
 
 * `--port`: Secure port that the webhook listens on (default 443)
 
+* `--kubeconfig <path>`: Path to Kubernetes client configuration that the webhook uses to connect to Kubernetes API server. When omitted, default token provided by Kubernetes will be used. This option is useful only when the snapshot controller does not run as a Kubernetes pod, e.g. for debugging.
+
+* `--prevent-volume-mode-conversion`: Boolean that prevents an unauthorised user from modifying the volume mode when creating a PVC from an existing VolumeSnapshot. Only present as an alpha feature in `v6.0.0` and above. 
+
+#### Validating Webhook Validations
+
+##### Volume Snapshot
+
+* Spec.VolumeSnapshotClassName must not be an empty string or nil on creation
+* Spec.Source.PersistentVolumeClaimName must not be changed on update requests
+* Spec.Source.VolumeSnapshotContentName must not be changed on update requests
+
+##### Volume Snapshot Content
+
+* Spec.VolumeSnapshotRef.Name must not be an empty string on creation
+* Spec.VolumeSnapshotRef.Namespace must not be an empty string on creation
+* Spec.Source.VolumeHandle must not be changed on update requests
+* Spec.Source.SnapshotHandle must not be changed on update requests
+* Spec.SourceVolumeMode must not be changes on update requests
+
+##### Volume Snapshot Classes
+
+* There can only be a single default volume snapshot class for a particular driver.
+
 ### Distributed Snapshotting
 
 The distributed snapshotting feature is provided to handle snapshot operations for local volumes. To use this functionality, the snapshotter sidecar should be deployed along with the csi driver on each node so that every node manages the snapshot operations only for the volumes local to that node. This feature can be enabled by setting the following command line options to true:
@@ -151,6 +175,8 @@ Other than this, the NODE_NAME environment variable must be set where the CSI sn
 * `--retry-interval-max`: Maximum retry interval of failed volume snapshot creation or deletion. Default value is 5 minutes.
 
 * `--enable-distributed-snapshotting` : Enables each node to handle snapshots for the volumes local to that node. Off by default. It should be set to true only if `--node-deployment` parameter for the csi external snapshotter sidecar is set to true. See https://github.com/kubernetes-csi/external-snapshotter/blob/master/README.md#distributed-snapshotting for details.
+
+* `--prevent-volume-mode-conversion`: Boolean that prevents an unauthorised user from modifying the volume mode when creating a PVC from an existing VolumeSnapshot. Only present as an alpha feature in `v6.0.0` and above.
 
 #### Other recognized arguments
 * `--kubeconfig <path>`: Path to Kubernetes client configuration that the snapshot controller uses to connect to Kubernetes API server. When omitted, default token provided by Kubernetes will be used. This option is useful only when the snapshot controller does not run as a Kubernetes pod, e.g. for debugging.

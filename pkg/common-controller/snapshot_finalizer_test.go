@@ -19,14 +19,13 @@ package common_controller
 import (
 	"testing"
 
-	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/utils"
+	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/utils"
 	v1 "k8s.io/api/core/v1"
 )
 
 // Test single call to ensurePVCFinalizer, checkandRemovePVCFinalizer, addSnapshotFinalizer, removeSnapshotFinalizer
 // expecting finalizers to be added or removed
 func TestSnapshotFinalizer(t *testing.T) {
-
 	tests := []controllerTest{
 		{
 			name:             "1-1 - successful add PVC finalizer",

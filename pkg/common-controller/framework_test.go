@@ -31,14 +31,14 @@ import (
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned"
-	"github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned/fake"
-	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned/scheme"
-	informers "github.com/kubernetes-csi/external-snapshotter/client/v4/informers/externalversions"
-	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v4/listers/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/metrics"
-	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned"
+	"github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned/fake"
+	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned/scheme"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v6/informers/externalversions"
+	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v6/listers/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/metrics"
+	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/utils"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -112,14 +112,18 @@ type controllerTest struct {
 
 type testCall func(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error
 
-const testNamespace = "default"
-const mockDriverName = "csi-mock-plugin"
+const (
+	testNamespace  = "default"
+	mockDriverName = "csi-mock-plugin"
+)
 
-var errVersionConflict = errors.New("VersionError")
-var nocontents []*crdv1.VolumeSnapshotContent
-var nosnapshots []*crdv1.VolumeSnapshot
-var noevents = []string{}
-var noerrors = []reactorError{}
+var (
+	errVersionConflict = errors.New("VersionError")
+	nocontents         []*crdv1.VolumeSnapshotContent
+	nosnapshots        []*crdv1.VolumeSnapshot
+	noevents           = []string{}
+	noerrors           = []reactorError{}
+)
 
 // snapshotReactor is a core.Reactor that simulates etcd and API server. It
 // stores:
@@ -844,6 +848,7 @@ func newTestController(kubeClient kubernetes.Interface, clientset clientset.Inte
 		workqueue.NewItemExponentialFailureRateLimiter(1*time.Millisecond, 1*time.Minute),
 		workqueue.NewItemExponentialFailureRateLimiter(1*time.Millisecond, 1*time.Minute),
 		false,
+		false,
 	)
 
 	ctrl.eventRecorder = record.NewFakeRecorder(1000)
@@ -920,6 +925,7 @@ func withSnapshotContentInvalidLabel(contents []*crdv1.VolumeSnapshotContent) []
 	}
 	return contents
 }
+
 func withContentAnnotations(contents []*crdv1.VolumeSnapshotContent, annotations map[string]string) []*crdv1.VolumeSnapshotContent {
 	for i := range contents {
 		if contents[i].ObjectMeta.Annotations == nil {
@@ -1199,7 +1205,6 @@ func testSyncSnapshot(ctrl *csiSnapshotCommonController, reactor *snapshotReacto
 
 func testSyncSnapshotError(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error {
 	err := ctrl.syncSnapshot(test.initialSnapshots[0])
-
 	if err != nil {
 		return nil
 	}
@@ -1302,7 +1307,6 @@ var (
 //   controller waits for the operation lock. Controller is then resumed and we
 //   check how it behaves.
 func wrapTestWithInjectedOperation(toWrap testCall, injectBeforeOperation func(ctrl *csiSnapshotCommonController, reactor *snapshotReactor)) testCall {
-
 	return func(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error {
 		// Inject a hook before async operation starts
 		klog.V(4).Infof("reactor:injecting call")

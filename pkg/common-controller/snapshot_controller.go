@@ -32,10 +32,10 @@ import (
 	corev1helpers "k8s.io/component-helpers/scheduling/corev1"
 	klog "k8s.io/klog/v2"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/metrics"
-	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/utils"
-	webhook "github.com/kubernetes-csi/external-snapshotter/v4/pkg/validation-webhook"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/metrics"
+	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/utils"
+	webhook "github.com/kubernetes-csi/external-snapshotter/v6/pkg/validation-webhook"
 )
 
 // ==================================================================
@@ -77,8 +77,10 @@ import (
 // bi-directional binding is complete and readyToUse becomes true. Error field
 // in the snapshot status will be updated accordingly when failure occurs.
 
-const snapshotKind = "VolumeSnapshot"
-const snapshotAPIGroup = crdv1.GroupName
+const (
+	snapshotKind     = "VolumeSnapshot"
+	snapshotAPIGroup = crdv1.GroupName
+)
 
 const controllerUpdateFailMsg = "snapshot controller failed to update"
 
@@ -684,6 +686,13 @@ func (ctrl *csiSnapshotCommonController) createSnapshotContent(snapshot *crdv1.V
 		}
 	}
 
+	if ctrl.preventVolumeModeConversion {
+		if volume.Spec.VolumeMode != nil {
+			snapshotContent.Spec.SourceVolumeMode = volume.Spec.VolumeMode
+			klog.V(5).Infof("snapcontent %s has volume mode %s", snapshotContent.Name, *snapshotContent.Spec.SourceVolumeMode)
+		}
+	}
+
 	// Set AnnDeletionSecretRefName and AnnDeletionSecretRefNamespace
 	if snapshotterSecretRef != nil {
 		klog.V(5).Infof("createSnapshotContent: set annotation [%s] on content [%s].", utils.AnnDeletionSecretRefName, snapshotContent.Name)
@@ -822,7 +831,6 @@ func (ctrl *csiSnapshotCommonController) updateSnapshotErrorStatusWithEvent(snap
 
 // addContentFinalizer adds a Finalizer for VolumeSnapshotContent.
 func (ctrl *csiSnapshotCommonController) addContentFinalizer(content *crdv1.VolumeSnapshotContent) error {
-
 	var patches []utils.PatchOp
 	if len(content.Finalizers) > 0 {
 		// Add to the end of the finalizers if we have any other finalizers
@@ -831,7 +839,6 @@ func (ctrl *csiSnapshotCommonController) addContentFinalizer(content *crdv1.Volu
 			Path:  "/metadata/finalizers/-",
 			Value: utils.VolumeSnapshotContentFinalizer,
 		})
-
 	} else {
 		// Replace finalizers with new array if there are no other finalizers
 		patches = append(patches, utils.PatchOp{

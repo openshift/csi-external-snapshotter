@@ -20,12 +20,12 @@ import (
 	"fmt"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned"
-	storageinformers "github.com/kubernetes-csi/external-snapshotter/client/v4/informers/externalversions/volumesnapshot/v1"
-	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v4/listers/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/metrics"
-	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned"
+	storageinformers "github.com/kubernetes-csi/external-snapshotter/client/v6/informers/externalversions/volumesnapshot/v1"
+	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v6/listers/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/metrics"
+	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/utils"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -68,6 +68,7 @@ type csiSnapshotCommonController struct {
 	resyncPeriod time.Duration
 
 	enableDistributedSnapshotting bool
+	preventVolumeModeConversion   bool
 }
 
 // NewCSISnapshotController returns a new *csiSnapshotCommonController
@@ -84,6 +85,7 @@ func NewCSISnapshotCommonController(
 	snapshotRateLimiter workqueue.RateLimiter,
 	contentRateLimiter workqueue.RateLimiter,
 	enableDistributedSnapshotting bool,
+	preventVolumeModeConversion bool,
 ) *csiSnapshotCommonController {
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartLogging(klog.Infof)
@@ -137,6 +139,8 @@ func NewCSISnapshotCommonController(
 		ctrl.nodeLister = nodeInformer.Lister()
 		ctrl.nodeListerSynced = nodeInformer.Informer().HasSynced
 	}
+
+	ctrl.preventVolumeModeConversion = preventVolumeModeConversion
 
 	return ctrl
 }

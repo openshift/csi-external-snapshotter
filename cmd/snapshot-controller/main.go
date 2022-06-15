@@ -40,12 +40,12 @@ import (
 	klog "k8s.io/klog/v2"
 
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
-	controller "github.com/kubernetes-csi/external-snapshotter/v4/pkg/common-controller"
-	"github.com/kubernetes-csi/external-snapshotter/v4/pkg/metrics"
+	controller "github.com/kubernetes-csi/external-snapshotter/v6/pkg/common-controller"
+	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/metrics"
 
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned"
-	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v4/clientset/versioned/scheme"
-	informers "github.com/kubernetes-csi/external-snapshotter/client/v4/informers/externalversions"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned"
+	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned/scheme"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v6/informers/externalversions"
 	coreinformers "k8s.io/client-go/informers"
 )
 
@@ -70,11 +70,10 @@ var (
 	retryIntervalStart            = flag.Duration("retry-interval-start", time.Second, "Initial retry interval of failed volume snapshot creation or deletion. It doubles with each failure, up to retry-interval-max. Default is 1 second.")
 	retryIntervalMax              = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval of failed volume snapshot creation or deletion. Default is 5 minutes.")
 	enableDistributedSnapshotting = flag.Bool("enable-distributed-snapshotting", false, "Enables each node to handle snapshotting for the local volumes created on that node")
+	preventVolumeModeConversion   = flag.Bool("prevent-volume-mode-conversion", false, "Prevents an unauthorised user from modifying the volume mode when creating a PVC from an existing VolumeSnapshot.")
 )
 
-var (
-	version = "unknown"
-)
+var version = "unknown"
 
 // Checks that the VolumeSnapshot v1 CRDs exist.
 func ensureCustomResourceDefinitionsExist(client *clientset.Clientset) error {
@@ -187,6 +186,7 @@ func main() {
 		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
 		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
 		*enableDistributedSnapshotting,
+		*preventVolumeModeConversion,
 	)
 
 	if err := ensureCustomResourceDefinitionsExist(snapClient); err != nil {

@@ -69,7 +69,7 @@ spec:
       labels:
         app: csi-snapshotter
     spec:
-      serviceAccount: csi-snapshotter
+      serviceAccountName: csi-snapshotter
       containers:
         - name: csi-provisioner
           image: k8s.gcr.io/sig-storage/csi-provisioner:v3.0.0
@@ -84,7 +84,7 @@ spec:
             - name: socket-dir
               mountPath: /csi
         - name: csi-snapshotter
-          image: gcr.io/k8s-staging-sig-storage/csi-snapshotter:v5.0.0
+          image: gcr.io/k8s-staging-sig-storage/csi-snapshotter:v5.0.1
           args:
             - "--v=5"
             - "--csi-address=$(ADDRESS)"
