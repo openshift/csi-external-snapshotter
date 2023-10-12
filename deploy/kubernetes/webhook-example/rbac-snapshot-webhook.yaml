@@ -5,6 +5,7 @@
 # namespace for components implementing base system functionality. For installing with
 # Vanilla Kubernetes, kube-system makes sense for the namespace.
 
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -18,6 +19,9 @@ metadata:
 rules:
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshotclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["groupsnapshot.storage.k8s.io"]
+    resources: ["volumegroupsnapshotclasses"]
     verbs: ["get", "list", "watch"]
 ---
 kind: ClusterRoleBinding
