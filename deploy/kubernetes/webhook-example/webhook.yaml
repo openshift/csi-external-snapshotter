@@ -5,23 +5,27 @@ metadata:
   name: snapshot-validation-deployment
   namespace: default # NOTE: change the namespace
   labels:
-    app: snapshot-validation
+    app.kubernetes.io/name: snapshot-validation
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: snapshot-validation
+      app.kubernetes.io/name: snapshot-validation
   template:
     metadata:
       labels:
-        app: snapshot-validation
+        app.kubernetes.io/name: snapshot-validation
     spec:
       serviceAccountName: snapshot-webhook
       containers:
       - name: snapshot-validation
-        image: registry.k8s.io/sig-storage/snapshot-validation-webhook:v6.2.1 # change the image if you wish to use your own custom validation server image
+        image: registry.k8s.io/sig-storage/snapshot-validation-webhook:v6.3.1 # change the image if you wish to use your own custom validation server image
         imagePullPolicy: IfNotPresent
-        args: ['--tls-cert-file=/etc/snapshot-validation-webhook/certs/tls.crt', '--tls-private-key-file=/etc/snapshot-validation-webhook/certs/tls.key']
+        args:
+        - '--tls-cert-file=/etc/snapshot-validation-webhook/certs/tls.crt'
+        - '--tls-private-key-file=/etc/snapshot-validation-webhook/certs/tls.key'
+        # uncomment the following line to enable webhook for VolumeGroupSnapshot, VolumeGroupSnapshotContent and VolumeGroupSnapshotClass.
+        # - '--enable-volume-group-snapshot-webhook'
         ports:
         - containerPort: 443 # change the port as needed
         volumeMounts:
@@ -40,7 +44,7 @@ metadata:
   namespace: default # NOTE: change the namespace
 spec:
   selector:
-    app: snapshot-validation
+    app.kubernetes.io/name: snapshot-validation
   ports:
     - protocol: TCP
       port: 443 # Change if needed

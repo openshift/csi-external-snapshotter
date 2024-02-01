@@ -61,15 +61,23 @@ func FanotifyMark(fd int, flags uint, mask uint64, dirFd int, pathname string) (
 }
 
 //sys	fchmodat(dirfd int, path string, mode uint32) (err error)
+//sys	fchmodat2(dirfd int, path string, mode uint32, flags int) (err error)
 
-func Fchmodat(dirfd int, path string, mode uint32, flags int) (err error) {
-	// Linux fchmodat doesn't support the flags parameter. Mimick glibc's behavior
-	// and check the flags. Otherwise the mode would be applied to the symlink
-	// destination which is not what the user expects.
-	if flags&^AT_SYMLINK_NOFOLLOW != 0 {
-		return EINVAL
-	} else if flags&AT_SYMLINK_NOFOLLOW != 0 {
-		return EOPNOTSUPP
+func Fchmodat(dirfd int, path string, mode uint32, flags int) error {
+	// Linux fchmodat doesn't support the flags parameter, but fchmodat2 does.
+	// Try fchmodat2 if flags are specified.
+	if flags != 0 {
+		err := fchmodat2(dirfd, path, mode, flags)
+		if err == ENOSYS {
+			// fchmodat2 isn't available. If the flags are known to be valid,
+			// return EOPNOTSUPP to indicate that fchmodat doesn't support them.
+			if flags&^(AT_SYMLINK_NOFOLLOW|AT_EMPTY_PATH) != 0 {
+				return EINVAL
+			} else if flags&(AT_SYMLINK_NOFOLLOW|AT_EMPTY_PATH) != 0 {
+				return EOPNOTSUPP
+			}
+		}
+		return err
 	}
 	return fchmodat(dirfd, path, mode)
 }
@@ -417,7 +425,8 @@ func (sa *SockaddrUnix) sockaddr() (unsafe.Pointer, _Socklen, error) {
 	if n > 0 {
 		sl += _Socklen(n) + 1
 	}
-	if sa.raw.Path[0] == '@' {
+	if sa.raw.Path[0] == '@' || (sa.raw.Path[0] == 0 && sl > 3) {
+		// Check sl > 3 so we don't change unnamed socket behavior.
 		sa.raw.Path[0] = 0
 		// Don't count trailing NUL for abstract address.
 		sl--
@@ -1301,7 +1310,7 @@ func GetsockoptString(fd, level, opt int) (string, error) {
 			return "", err
 		}
 	}
-	return string(buf[:vallen-1]), nil
+	return ByteSliceToString(buf[:vallen]), nil
 }
 
 func GetsockoptTpacketStats(fd, level, opt int) (*TpacketStats, error) {
@@ -2427,6 +2436,7 @@ func Getresgid() (rgid, egid, sgid int) {
 	return int(r), int(e), int(s)
 }
 
+<<<<<<< HEAD
 // Pselect is a wrapper around the Linux pselect6 system call.
 // This version does not modify the timeout argument.
 func Pselect(nfd int, r *FdSet, w *FdSet, e *FdSet, timeout *Timespec, sigmask *Sigset_t) (n int, err error) {
@@ -2482,3 +2492,158 @@ func SchedGetAttr(pid int, flags uint) (*SchedAttr, error) {
 	}
 	return attr, nil
 }
+||||||| a6ac2ee3
+/*
+ * Unimplemented
+ */
+// AfsSyscall
+// ArchPrctl
+// Brk
+// ClockNanosleep
+// ClockSettime
+// Clone
+// EpollCtlOld
+// EpollPwait
+// EpollWaitOld
+// Execve
+// Fork
+// Futex
+// GetKernelSyms
+// GetMempolicy
+// GetRobustList
+// GetThreadArea
+// Getpmsg
+// IoCancel
+// IoDestroy
+// IoGetevents
+// IoSetup
+// IoSubmit
+// IoprioGet
+// IoprioSet
+// KexecLoad
+// LookupDcookie
+// Mbind
+// MigratePages
+// Mincore
+// ModifyLdt
+// Mount
+// MovePages
+// MqGetsetattr
+// MqNotify
+// MqOpen
+// MqTimedreceive
+// MqTimedsend
+// MqUnlink
+// Msgctl
+// Msgget
+// Msgrcv
+// Msgsnd
+// Nfsservctl
+// Personality
+// Pselect6
+// Ptrace
+// Putpmsg
+// Quotactl
+// Readahead
+// Readv
+// RemapFilePages
+// RestartSyscall
+// RtSigaction
+// RtSigpending
+// RtSigqueueinfo
+// RtSigreturn
+// RtSigsuspend
+// RtSigtimedwait
+// SchedGetPriorityMax
+// SchedGetPriorityMin
+// SchedGetparam
+// SchedGetscheduler
+// SchedRrGetInterval
+// SchedSetparam
+// SchedYield
+// Security
+// Semctl
+// Semget
+// Semop
+// Semtimedop
+// SetMempolicy
+// SetRobustList
+// SetThreadArea
+// SetTidAddress
+// Sigaltstack
+// Swapoff
+// Swapon
+// Sysfs
+// TimerCreate
+// TimerDelete
+// TimerGetoverrun
+// TimerGettime
+// TimerSettime
+// Tkill (obsolete)
+// Tuxcall
+// Umount2
+// Uselib
+// Utimensat
+// Vfork
+// Vhangup
+// Vserver
+// _Sysctl
+=======
+// Pselect is a wrapper around the Linux pselect6 system call.
+// This version does not modify the timeout argument.
+func Pselect(nfd int, r *FdSet, w *FdSet, e *FdSet, timeout *Timespec, sigmask *Sigset_t) (n int, err error) {
+	// Per https://man7.org/linux/man-pages/man2/select.2.html#NOTES,
+	// The Linux pselect6() system call modifies its timeout argument.
+	// [Not modifying the argument] is the behavior required by POSIX.1-2001.
+	var mutableTimeout *Timespec
+	if timeout != nil {
+		mutableTimeout = new(Timespec)
+		*mutableTimeout = *timeout
+	}
+
+	// The final argument of the pselect6() system call is not a
+	// sigset_t * pointer, but is instead a structure
+	var kernelMask *sigset_argpack
+	if sigmask != nil {
+		wordBits := 32 << (^uintptr(0) >> 63) // see math.intSize
+
+		// A sigset stores one bit per signal,
+		// offset by 1 (because signal 0 does not exist).
+		// So the number of words needed is ⌈__C_NSIG - 1 / wordBits⌉.
+		sigsetWords := (_C__NSIG - 1 + wordBits - 1) / (wordBits)
+
+		sigsetBytes := uintptr(sigsetWords * (wordBits / 8))
+		kernelMask = &sigset_argpack{
+			ss:    sigmask,
+			ssLen: sigsetBytes,
+		}
+	}
+
+	return pselect6(nfd, r, w, e, mutableTimeout, kernelMask)
+}
+
+//sys	schedSetattr(pid int, attr *SchedAttr, flags uint) (err error)
+//sys	schedGetattr(pid int, attr *SchedAttr, size uint, flags uint) (err error)
+
+// SchedSetAttr is a wrapper for sched_setattr(2) syscall.
+// https://man7.org/linux/man-pages/man2/sched_setattr.2.html
+func SchedSetAttr(pid int, attr *SchedAttr, flags uint) error {
+	if attr == nil {
+		return EINVAL
+	}
+	attr.Size = SizeofSchedAttr
+	return schedSetattr(pid, attr, flags)
+}
+
+// SchedGetAttr is a wrapper for sched_getattr(2) syscall.
+// https://man7.org/linux/man-pages/man2/sched_getattr.2.html
+func SchedGetAttr(pid int, flags uint) (*SchedAttr, error) {
+	attr := &SchedAttr{}
+	if err := schedGetattr(pid, attr, SizeofSchedAttr, flags); err != nil {
+		return nil, err
+	}
+	return attr, nil
+}
+
+//sys	Cachestat(fd uint, crange *CachestatRange, cstat *Cachestat_t, flags uint) (err error)
+>>>>>>> v7.0.0

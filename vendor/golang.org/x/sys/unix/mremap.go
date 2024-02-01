@@ -2,8 +2,15 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+<<<<<<< HEAD
 //go:build linux || netbsd
 // +build linux netbsd
+||||||| a6ac2ee3
+//go:build linux
+// +build linux
+=======
+//go:build linux || netbsd
+>>>>>>> v7.0.0
 
 package unix
 

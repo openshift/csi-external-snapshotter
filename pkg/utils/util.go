@@ -33,8 +33,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 	klog "k8s.io/klog/v2"
 
-	crdv1alpha1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumegroupsnapshot/v1alpha1"
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
+	crdv1alpha1 "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumegroupsnapshot/v1alpha1"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumesnapshot/v1"
 )
 
 var keyFunc = cache.DeletionHandlingMetaNamespaceKeyFunc
@@ -74,8 +74,14 @@ const (
 	VolumeSnapshotBoundFinalizer = "snapshot.storage.kubernetes.io/volumesnapshot-bound-protection"
 	// Name of finalizer on VolumeSnapshot that is used as a source to create a PVC
 	VolumeSnapshotAsSourceFinalizer = "snapshot.storage.kubernetes.io/volumesnapshot-as-source-protection"
+	// Name of finalizer on VolumeSnapshot that is a part of a VolumeGroupSnapshot
+	VolumeSnapshotInGroupFinalizer = "snapshot.storage.kubernetes.io/volumesnapshot-in-group-protection"
 	// Name of finalizer on PVCs that is being used as a source to create VolumeSnapshots
 	PVCFinalizer = "snapshot.storage.kubernetes.io/pvc-as-source-protection"
+	// Name of finalizer on VolumeGroupSnapshotContents that are bound by VolumeGroupSnapshots
+	VolumeGroupSnapshotContentFinalizer = "groupsnapshot.storage.kubernetes.io/volumegroupsnapshotcontent-bound-protection"
+	// Name of finalizer on VolumeGroupSnapshots that are bound to VolumeGroupSnapshotContents
+	VolumeGroupSnapshotBoundFinalizer = "groupsnapshot.storage.kubernetes.io/volumegroupsnapshot-bound-protection"
 
 	IsDefaultSnapshotClassAnnotation      = "snapshot.storage.kubernetes.io/is-default-class"
 	IsDefaultGroupSnapshotClassAnnotation = "groupsnapshot.storage.kubernetes.io/is-default-class"
@@ -113,6 +119,14 @@ const (
 	// the create group snapshot CSI method will not be called for pre-provisioned
 	// group snapshots.
 	AnnVolumeGroupSnapshotBeingCreated = "groupsnapshot.storage.kubernetes.io/volumegroupsnapshot-being-created"
+
+	// AnnVolumeGroupSnapshotBeingDeleted annotation applies to VolumeGroupSnapshotContents.
+	// It indicates that the common snapshot controller has verified that volume
+	// group snapshot has a deletion timestamp and is being deleted.
+	// Sidecar controller needs to check the deletion policy on the
+	// VolumeGroupSnapshotContent and decide whether to delete the volume group snapshot
+	// backing the group snapshot content.
+	AnnVolumeGroupSnapshotBeingDeleted = "groupsnapshot.storage.kubernetes.io/volumegroupsnapshot-being-deleted"
 
 	// Annotation for secret name and namespace will be added to the content
 	// and used at snapshot content deletion time.
@@ -406,10 +420,21 @@ func NeedToAddContentFinalizer(content *crdv1.VolumeSnapshotContent) bool {
 	return content.ObjectMeta.DeletionTimestamp == nil && !ContainsString(content.ObjectMeta.Finalizers, VolumeSnapshotContentFinalizer)
 }
 
+// NeedToAddGroupSnapshotContentFinalizer checks if a Finalizer needs to be added for the volume group snapshot content.
+func NeedToAddGroupSnapshotContentFinalizer(groupSnapshotContent *crdv1alpha1.VolumeGroupSnapshotContent) bool {
+	return groupSnapshotContent.ObjectMeta.DeletionTimestamp == nil && !ContainsString(groupSnapshotContent.ObjectMeta.Finalizers, VolumeGroupSnapshotContentFinalizer)
+}
+
 // IsSnapshotDeletionCandidate checks if a volume snapshot deletionTimestamp
 // is set and any finalizer is on the snapshot.
 func IsSnapshotDeletionCandidate(snapshot *crdv1.VolumeSnapshot) bool {
 	return snapshot.ObjectMeta.DeletionTimestamp != nil && (ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotAsSourceFinalizer) || ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotBoundFinalizer))
+}
+
+// IsGroupSnapshotDeletionCandidate checks if a volume group snapshot deletionTimestamp
+// is set and any finalizer is on the group snapshot.
+func IsGroupSnapshotDeletionCandidate(groupSnapshot *crdv1alpha1.VolumeGroupSnapshot) bool {
+	return groupSnapshot.ObjectMeta.DeletionTimestamp != nil && ContainsString(groupSnapshot.ObjectMeta.Finalizers, VolumeGroupSnapshotBoundFinalizer)
 }
 
 // NeedToAddSnapshotAsSourceFinalizer checks if a Finalizer needs to be added for the volume snapshot as a source for PVC.
@@ -420,6 +445,11 @@ func NeedToAddSnapshotAsSourceFinalizer(snapshot *crdv1.VolumeSnapshot) bool {
 // NeedToAddSnapshotBoundFinalizer checks if a Finalizer needs to be added for the bound volume snapshot.
 func NeedToAddSnapshotBoundFinalizer(snapshot *crdv1.VolumeSnapshot) bool {
 	return snapshot.ObjectMeta.DeletionTimestamp == nil && !ContainsString(snapshot.ObjectMeta.Finalizers, VolumeSnapshotBoundFinalizer) && IsBoundVolumeSnapshotContentNameSet(snapshot)
+}
+
+// NeedToAddGroupSnapshotBoundFinalizer checks if a Finalizer needs to be added for the bound volume group snapshot.
+func NeedToAddGroupSnapshotBoundFinalizer(groupSnapshot *crdv1alpha1.VolumeGroupSnapshot) bool {
+	return groupSnapshot.ObjectMeta.DeletionTimestamp == nil && !ContainsString(groupSnapshot.ObjectMeta.Finalizers, VolumeGroupSnapshotBoundFinalizer) && IsBoundVolumeGroupSnapshotContentNameSet(groupSnapshot)
 }
 
 func deprecationWarning(deprecatedParam, newParam, removalVersion string) string {
@@ -466,6 +496,18 @@ func GetSnapshotStatusForLogging(snapshot *crdv1.VolumeSnapshot) string {
 		ready = *snapshot.Status.ReadyToUse
 	}
 	return fmt.Sprintf("bound to: %q, Completed: %v", snapshotContentName, ready)
+}
+
+func GetGroupSnapshotStatusForLogging(groupSnapshot *crdv1alpha1.VolumeGroupSnapshot) string {
+	groupSnapshotContentName := ""
+	if groupSnapshot.Status != nil && groupSnapshot.Status.BoundVolumeGroupSnapshotContentName != nil {
+		groupSnapshotContentName = *groupSnapshot.Status.BoundVolumeGroupSnapshotContentName
+	}
+	ready := false
+	if groupSnapshot.Status != nil && groupSnapshot.Status.ReadyToUse != nil {
+		ready = *groupSnapshot.Status.ReadyToUse
+	}
+	return fmt.Sprintf("bound to: %q, Completed: %v", groupSnapshotContentName, ready)
 }
 
 func IsVolumeSnapshotRefSet(snapshot *crdv1.VolumeSnapshot, content *crdv1.VolumeSnapshotContent) bool {

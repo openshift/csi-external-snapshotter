@@ -32,10 +32,10 @@ import (
 	corev1helpers "k8s.io/component-helpers/scheduling/corev1"
 	klog "k8s.io/klog/v2"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/metrics"
-	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/utils"
-	webhook "github.com/kubernetes-csi/external-snapshotter/v6/pkg/validation-webhook"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/metrics"
+	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/utils"
+	webhook "github.com/kubernetes-csi/external-snapshotter/v7/pkg/validation-webhook"
 )
 
 // ==================================================================
@@ -308,6 +308,26 @@ func (ctrl *csiSnapshotCommonController) checkandRemoveSnapshotFinalizersAndChec
 		return nil
 	}
 
+	removeGroupFinalizer := false
+	// Block deletion if this snapshot belongs to a group snapshot.
+	if snapshot.Status != nil && snapshot.Status.VolumeGroupSnapshotName != nil {
+		groupSnapshot, err := ctrl.groupSnapshotLister.VolumeGroupSnapshots(snapshot.Namespace).Get(*snapshot.Status.VolumeGroupSnapshotName)
+		if err == nil {
+			msg := fmt.Sprintf("deletion of the individual volume snapshot %s is not allowed as it belongs to group snapshot %s. Deleting the group snapshot will trigger the deletion of all the individual volume snapshots that are part of the group.", utils.SnapshotKey(snapshot), utils.GroupSnapshotKey(groupSnapshot))
+			klog.Error(msg)
+			ctrl.eventRecorder.Event(snapshot, v1.EventTypeWarning, "SnapshotDeletePending", msg)
+			return fmt.Errorf(msg)
+		}
+		if !apierrs.IsNotFound(err) {
+			klog.Errorf("failed to delete snapshot %s: %v", utils.SnapshotKey(snapshot), err)
+			return err
+		}
+		// group snapshot API object was deleted.
+		// The VolumeSnapshotInGroupFinalizer can be removed from this snapshot
+		// to trigger deletion.
+		removeGroupFinalizer = true
+	}
+
 	// regardless of the deletion policy, set the VolumeSnapshotBeingDeleted on
 	// content object, this is to allow snapshotter sidecar controller to conduct
 	// a delete operation whenever the content has deletion timestamp set.
@@ -334,7 +354,7 @@ func (ctrl *csiSnapshotCommonController) checkandRemoveSnapshotFinalizersAndChec
 	}
 
 	klog.V(5).Infof("checkandRemoveSnapshotFinalizersAndCheckandDeleteContent: Remove Finalizer for VolumeSnapshot[%s]", utils.SnapshotKey(snapshot))
-	// remove finalizers on the VolumeSnapshot object, there are two finalizers:
+	// remove finalizers on the VolumeSnapshot object, there are three finalizers:
 	// 1. VolumeSnapshotAsSourceFinalizer, once reached here, the snapshot is not
 	//    in use to restore PVC, and the finalizer will be removed directly.
 	// 2. VolumeSnapshotBoundFinalizer:
@@ -344,8 +364,10 @@ func (ctrl *csiSnapshotCommonController) checkandRemoveSnapshotFinalizersAndChec
 	//       by snapshot sidecar controller.
 	//    c. If deletion will not cascade to the content, remove the finalizer on
 	//       the snapshot such that it can be removed from API server.
+	// 3. VolumeSnapshotInGroupFinalizer, if the snapshot was part of a group snapshot,
+	//    then the group snapshot has been deleted, so remove the finalizer.
 	removeBoundFinalizer := !(content != nil && deleteContent)
-	return ctrl.removeSnapshotFinalizer(snapshot, true, removeBoundFinalizer)
+	return ctrl.removeSnapshotFinalizer(snapshot, true, removeBoundFinalizer, removeGroupFinalizer)
 }
 
 // checkandAddSnapshotFinalizers checks and adds snapshot finailzers when needed
@@ -1139,6 +1161,27 @@ func (ctrl *csiSnapshotCommonController) updateSnapshotStatus(snapshot *crdv1.Vo
 		volumeSnapshotErr = content.Status.Error.DeepCopy()
 	}
 
+	var groupSnapshotName string
+	if content.Status != nil && content.Status.VolumeGroupSnapshotHandle != nil {
+		// If this snapshot belongs to a group snapshot, find the group snapshot
+		// name from the group snapshot content
+		groupSnapshotContentList, err := ctrl.groupSnapshotContentLister.List(labels.Everything())
+		if err != nil {
+			return nil, err
+		}
+		found := false
+		for _, groupSnapshotContent := range groupSnapshotContentList {
+			if groupSnapshotContent.Status != nil && groupSnapshotContent.Status.VolumeGroupSnapshotHandle != nil && *groupSnapshotContent.Status.VolumeGroupSnapshotHandle == *content.Status.VolumeGroupSnapshotHandle {
+				groupSnapshotName = groupSnapshotContent.Spec.VolumeGroupSnapshotRef.Name
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("updateSnapshotStatus: cannot find the group snapshot for VolumeSnapshot [%s], will not update snapshot status", utils.SnapshotKey(snapshot))
+		}
+	}
+
 	klog.V(5).Infof("updateSnapshotStatus: updating VolumeSnapshot [%+v] based on VolumeSnapshotContentStatus [%+v]", snapshot, content.Status)
 
 	snapshotObj, err := ctrl.clientset.SnapshotV1().VolumeSnapshots(snapshot.Namespace).Get(context.TODO(), snapshot.Name, metav1.GetOptions{})
@@ -1162,10 +1205,12 @@ func (ctrl *csiSnapshotCommonController) updateSnapshotStatus(snapshot *crdv1.Vo
 		if volumeSnapshotErr != nil {
 			newStatus.Error = volumeSnapshotErr
 		}
+		if groupSnapshotName != "" {
+			newStatus.VolumeGroupSnapshotName = &groupSnapshotName
+		}
 		updated = true
 	} else {
 		newStatus = snapshotObj.Status.DeepCopy()
-		klog.Infof("Raunak 1 %s", newStatus.VolumeGroupSnapshotName)
 		if newStatus.BoundVolumeSnapshotContentName == nil {
 			newStatus.BoundVolumeSnapshotContentName = &boundContentName
 			updated = true
@@ -1187,6 +1232,10 @@ func (ctrl *csiSnapshotCommonController) updateSnapshotStatus(snapshot *crdv1.Vo
 		}
 		if (newStatus.Error == nil && volumeSnapshotErr != nil) || (newStatus.Error != nil && volumeSnapshotErr != nil && newStatus.Error.Time != nil && volumeSnapshotErr.Time != nil && &newStatus.Error.Time != &volumeSnapshotErr.Time) || (newStatus.Error != nil && volumeSnapshotErr == nil) {
 			newStatus.Error = volumeSnapshotErr
+			updated = true
+		}
+		if newStatus.VolumeGroupSnapshotName == nil && groupSnapshotName != "" {
+			newStatus.VolumeGroupSnapshotName = &groupSnapshotName
 			updated = true
 		}
 	}
@@ -1381,8 +1430,15 @@ func (ctrl *csiSnapshotCommonController) SetDefaultSnapshotClass(snapshot *crdv1
 	}
 	klog.V(5).Infof("setDefaultSnapshotClass [%s]: default VolumeSnapshotClassName [%s]", snapshot.Name, defaultClasses[0].Name)
 	snapshotClone := snapshot.DeepCopy()
-	snapshotClone.Spec.VolumeSnapshotClassName = &(defaultClasses[0].Name)
-	newSnapshot, err := ctrl.clientset.SnapshotV1().VolumeSnapshots(snapshotClone.Namespace).Update(context.TODO(), snapshotClone, metav1.UpdateOptions{})
+	patches := []utils.PatchOp{
+		{
+			Op:    "replace",
+			Path:  "/spec/volumeSnapshotClassName",
+			Value: &(defaultClasses[0].Name),
+		},
+	}
+
+	newSnapshot, err := utils.PatchVolumeSnapshot(snapshotClone, patches, ctrl.clientset)
 	if err != nil {
 		klog.V(4).Infof("updating VolumeSnapshot[%s] default class failed %v", utils.SnapshotKey(snapshot), err)
 	}
@@ -1493,8 +1549,8 @@ func (ctrl *csiSnapshotCommonController) addSnapshotFinalizer(snapshot *crdv1.Vo
 }
 
 // removeSnapshotFinalizer removes a Finalizer for VolumeSnapshot.
-func (ctrl *csiSnapshotCommonController) removeSnapshotFinalizer(snapshot *crdv1.VolumeSnapshot, removeSourceFinalizer bool, removeBoundFinalizer bool) error {
-	if !removeSourceFinalizer && !removeBoundFinalizer {
+func (ctrl *csiSnapshotCommonController) removeSnapshotFinalizer(snapshot *crdv1.VolumeSnapshot, removeSourceFinalizer bool, removeBoundFinalizer bool, removeGroupFinalizer bool) error {
+	if !removeSourceFinalizer && !removeBoundFinalizer && !removeGroupFinalizer {
 		return nil
 	}
 
@@ -1521,6 +1577,9 @@ func (ctrl *csiSnapshotCommonController) removeSnapshotFinalizer(snapshot *crdv1
 	}
 	if removeBoundFinalizer {
 		snapshotClone.ObjectMeta.Finalizers = utils.RemoveString(snapshotClone.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer)
+	}
+	if removeGroupFinalizer {
+		snapshotClone.ObjectMeta.Finalizers = utils.RemoveString(snapshotClone.ObjectMeta.Finalizers, utils.VolumeSnapshotInGroupFinalizer)
 	}
 	newSnapshot, err := ctrl.clientset.SnapshotV1().VolumeSnapshots(snapshotClone.Namespace).Update(context.TODO(), snapshotClone, metav1.UpdateOptions{})
 	if err != nil {
@@ -1606,18 +1665,24 @@ func (ctrl *csiSnapshotCommonController) checkAndSetInvalidContentLabel(content 
 		return content, nil
 	}
 
+	var patches []utils.PatchOp
 	contentClone := content.DeepCopy()
 	if hasLabel {
 		// Need to remove the label
-		delete(contentClone.Labels, utils.VolumeSnapshotContentInvalidLabel)
+		patches = append(patches, utils.PatchOp{
+			Op:   "remove",
+			Path: "/metadata/labels/" + utils.VolumeSnapshotContentInvalidLabel,
+		})
+
 	} else {
 		// Snapshot content is invalid and does not have the label. Need to add the label
-		if contentClone.ObjectMeta.Labels == nil {
-			contentClone.ObjectMeta.Labels = make(map[string]string)
-		}
-		contentClone.ObjectMeta.Labels[utils.VolumeSnapshotContentInvalidLabel] = ""
+		patches = append(patches, utils.PatchOp{
+			Op:    "add",
+			Path:  "/metadata/labels/" + utils.VolumeSnapshotContentInvalidLabel,
+			Value: "",
+		})
 	}
-	updatedContent, err := ctrl.clientset.SnapshotV1().VolumeSnapshotContents().Update(context.TODO(), contentClone, metav1.UpdateOptions{})
+	updatedContent, err := utils.PatchVolumeSnapshotContent(contentClone, patches, ctrl.clientset)
 	if err != nil {
 		return content, newControllerUpdateError(content.Name, err.Error())
 	}
@@ -1647,19 +1712,24 @@ func (ctrl *csiSnapshotCommonController) checkAndSetInvalidSnapshotLabel(snapsho
 		return snapshot, nil
 	}
 
+	var patches []utils.PatchOp
 	snapshotClone := snapshot.DeepCopy()
 	if hasLabel {
 		// Need to remove the label
-		delete(snapshotClone.Labels, utils.VolumeSnapshotInvalidLabel)
+		patches = append(patches, utils.PatchOp{
+			Op:   "remove",
+			Path: "/metadata/labels/" + utils.VolumeSnapshotInvalidLabel,
+		})
 	} else {
 		// Snapshot is invalid and does not have the label. Need to add the label
-		if snapshotClone.ObjectMeta.Labels == nil {
-			snapshotClone.ObjectMeta.Labels = make(map[string]string)
-		}
-		snapshotClone.ObjectMeta.Labels[utils.VolumeSnapshotInvalidLabel] = ""
+		patches = append(patches, utils.PatchOp{
+			Op:    "add",
+			Path:  "/metadata/labels/" + utils.VolumeSnapshotInvalidLabel,
+			Value: "",
+		})
 	}
 
-	updatedSnapshot, err := ctrl.clientset.SnapshotV1().VolumeSnapshots(snapshot.Namespace).Update(context.TODO(), snapshotClone, metav1.UpdateOptions{})
+	updatedSnapshot, err := utils.PatchVolumeSnapshot(snapshotClone, patches, ctrl.clientset)
 	if err != nil {
 		return snapshot, newControllerUpdateError(utils.SnapshotKey(snapshot), err.Error())
 	}

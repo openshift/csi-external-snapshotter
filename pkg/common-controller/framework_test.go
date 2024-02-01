@@ -31,14 +31,14 @@ import (
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned"
-	"github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned/fake"
-	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned/scheme"
-	informers "github.com/kubernetes-csi/external-snapshotter/client/v6/informers/externalversions"
-	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v6/listers/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/metrics"
-	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumesnapshot/v1"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned"
+	"github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned/fake"
+	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned/scheme"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v7/informers/externalversions"
+	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v7/listers/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/metrics"
+	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/utils"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1107,7 +1107,7 @@ func newClaim(name, claimUID, capacity, boundToVolume string, phase v1.Persisten
 		},
 		Spec: v1.PersistentVolumeClaimSpec{
 			AccessModes: []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce, v1.ReadOnlyMany},
-			Resources: v1.ResourceRequirements{
+			Resources: v1.VolumeResourceRequirements{
 				Requests: v1.ResourceList{
 					v1.ResourceName(v1.ResourceStorage): resource.MustParse(capacity),
 				},
@@ -1271,7 +1271,7 @@ func testAddSingleSnapshotFinalizer(ctrl *csiSnapshotCommonController, reactor *
 }
 
 func testRemoveSnapshotFinalizer(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error {
-	return ctrl.removeSnapshotFinalizer(test.initialSnapshots[0], true, true)
+	return ctrl.removeSnapshotFinalizer(test.initialSnapshots[0], true, true, false)
 }
 
 func testUpdateSnapshotClass(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error {
