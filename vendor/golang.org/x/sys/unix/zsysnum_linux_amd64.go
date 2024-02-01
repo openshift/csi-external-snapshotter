@@ -368,12 +368,7 @@ const (
 	SYS_PROCESS_MRELEASE        = 448
 	SYS_FUTEX_WAITV             = 449
 	SYS_SET_MEMPOLICY_HOME_NODE = 450
-<<<<<<< HEAD
-	SYS_CACHESTAT               = 451
-||||||| a6ac2ee3
-=======
 	SYS_CACHESTAT               = 451
 	SYS_FCHMODAT2               = 452
 	SYS_MAP_SHADOW_STACK        = 453
->>>>>>> v7.0.0
 )

@@ -1,20 +1,3 @@
-<<<<<<< HEAD
-// Copyright 2023 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
-//go:build aix || darwin || dragonfly || freebsd || openbsd || solaris
-// +build aix darwin dragonfly freebsd openbsd solaris
-
-package unix
-
-var mapper = &mmapper{
-	active: make(map[*byte][]byte),
-	mmap:   mmap,
-	munmap: munmap,
-}
-||||||| a6ac2ee3
-=======
 // Copyright 2023 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -28,4 +11,3 @@ var mapper = &mmapper{
 	mmap:   mmap,
 	munmap: munmap,
 }
->>>>>>> v7.0.0

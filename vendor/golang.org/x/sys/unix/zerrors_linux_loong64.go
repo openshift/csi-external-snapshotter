@@ -117,15 +117,9 @@ const (
 	IUCLC                            = 0x200
 	IXOFF                            = 0x1000
 	IXON                             = 0x400
-<<<<<<< HEAD
-	LASX_CTX_MAGIC                   = 0x41535801
-	LSX_CTX_MAGIC                    = 0x53580001
-||||||| a6ac2ee3
-=======
 	LASX_CTX_MAGIC                   = 0x41535801
 	LBT_CTX_MAGIC                    = 0x42540001
 	LSX_CTX_MAGIC                    = 0x53580001
->>>>>>> v7.0.0
 	MAP_ANON                         = 0x20
 	MAP_ANONYMOUS                    = 0x20
 	MAP_DENYWRITE                    = 0x800

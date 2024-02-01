@@ -5899,24 +5899,6 @@ const (
 	VIRTIO_NET_HDR_GSO_UDP_L4 = 0x5
 	VIRTIO_NET_HDR_GSO_ECN    = 0x80
 )
-<<<<<<< HEAD
-
-type SchedAttr struct {
-	Size     uint32
-	Policy   uint32
-	Flags    uint64
-	Nice     int32
-	Priority uint32
-	Runtime  uint64
-	Deadline uint64
-	Period   uint64
-	Util_min uint32
-	Util_max uint32
-}
-
-const SizeofSchedAttr = 0x38
-||||||| a6ac2ee3
-=======
 
 type SchedAttr struct {
 	Size     uint32
@@ -5944,4 +5926,3 @@ type CachestatRange struct {
 	Off uint64
 	Len uint64
 }
->>>>>>> v7.0.0
