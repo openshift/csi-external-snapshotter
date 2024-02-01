@@ -49,15 +49,8 @@ func TestSyncContent(t *testing.T) {
 					readyToUse:   true,
 				},
 			},
-<<<<<<< HEAD
-			expectedListCalls: []listCall{{"sid1-1", map[string]string{}, true, time.Now(), 1, nil}},
-			expectSuccess:     true,
-||||||| a6ac2ee3
-			expectedListCalls: []listCall{{"sid1-1", map[string]string{}, true, time.Now(), 1, nil}},
-=======
 			expectedListCalls: []listCall{{"sid1-1", map[string]string{}, true, time.Now(), 1, nil, ""}},
 			expectSuccess:     true,
->>>>>>> v7.0.0
 			errors:            noerrors,
 			test:              testSyncContent,
 		},
@@ -85,15 +78,8 @@ func TestSyncContent(t *testing.T) {
 					size:         defaultSize,
 				},
 			},
-<<<<<<< HEAD
-			expectedListCalls: []listCall{{"sid1-2", map[string]string{}, true, time.Now(), 1, nil}},
-			expectSuccess:     true,
-||||||| a6ac2ee3
-			expectedListCalls: []listCall{{"sid1-2", map[string]string{}, true, time.Now(), 1, nil}},
-=======
 			expectedListCalls: []listCall{{"sid1-2", map[string]string{}, true, time.Now(), 1, nil, ""}},
 			expectSuccess:     true,
->>>>>>> v7.0.0
 			errors:            noerrors,
 			test:              testSyncContent,
 		},

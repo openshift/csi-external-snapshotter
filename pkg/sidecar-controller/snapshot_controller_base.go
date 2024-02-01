@@ -20,14 +20,8 @@ import (
 	"fmt"
 	"time"
 
-<<<<<<< HEAD
-	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/group_snapshotter"
-
-||||||| a6ac2ee3
-=======
 	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/group_snapshotter"
 
->>>>>>> v7.0.0
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
