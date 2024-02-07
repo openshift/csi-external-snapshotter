@@ -22,13 +22,14 @@ import (
 	"strings"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/utils"
 	codes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	klog "k8s.io/klog/v2"
+
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/utils"
 )
 
 // Design:
@@ -251,7 +252,7 @@ func (ctrl *csiSnapshotSideCarController) checkandUpdateContentStatusOperation(c
 	var size int64
 	readyToUse := false
 	var driverName string
-	var snapshotID string
+	var snapshotID, groupSnapshotID string
 	var snapshotterListCredentials map[string]string
 
 	if content.Spec.Source.SnapshotHandle != nil {
@@ -278,7 +279,7 @@ func (ctrl *csiSnapshotSideCarController) checkandUpdateContentStatusOperation(c
 			}
 		}
 
-		readyToUse, creationTime, size, err = ctrl.handler.GetSnapshotStatus(content, snapshotterListCredentials)
+		readyToUse, creationTime, size, groupSnapshotID, err = ctrl.handler.GetSnapshotStatus(content, snapshotterListCredentials)
 		if err != nil {
 			klog.Errorf("checkandUpdateContentStatusOperation: failed to call get snapshot status to check whether snapshot is ready to use %q", err)
 			return content, err
@@ -286,13 +287,13 @@ func (ctrl *csiSnapshotSideCarController) checkandUpdateContentStatusOperation(c
 		driverName = content.Spec.Driver
 		snapshotID = *content.Spec.Source.SnapshotHandle
 
-		klog.V(5).Infof("checkandUpdateContentStatusOperation: driver %s, snapshotId %s, creationTime %v, size %d, readyToUse %t", driverName, snapshotID, creationTime, size, readyToUse)
+		klog.V(5).Infof("checkandUpdateContentStatusOperation: driver %s, snapshotId %s, creationTime %v, size %d, readyToUse %t, groupSnapshotID %s", driverName, snapshotID, creationTime, size, readyToUse, groupSnapshotID)
 
 		if creationTime.IsZero() {
 			creationTime = time.Now()
 		}
 
-		updatedContent, err := ctrl.updateSnapshotContentStatus(content, snapshotID, readyToUse, creationTime.UnixNano(), size)
+		updatedContent, err := ctrl.updateSnapshotContentStatus(content, snapshotID, readyToUse, creationTime.UnixNano(), size, groupSnapshotID)
 		if err != nil {
 			return content, err
 		}
@@ -354,7 +355,7 @@ func (ctrl *csiSnapshotSideCarController) createSnapshotWrapper(content *crdv1.V
 		creationTime = time.Now()
 	}
 
-	newContent, err := ctrl.updateSnapshotContentStatus(content, snapshotID, readyToUse, creationTime.UnixNano(), size)
+	newContent, err := ctrl.updateSnapshotContentStatus(content, snapshotID, readyToUse, creationTime.UnixNano(), size, "")
 	if err != nil {
 		klog.Errorf("error updating status for volume snapshot content %s: %v.", content.Name, err)
 		return content, fmt.Errorf("error updating status for volume snapshot content %s: %v", content.Name, err)
@@ -429,8 +430,9 @@ func (ctrl *csiSnapshotSideCarController) updateSnapshotContentStatus(
 	snapshotHandle string,
 	readyToUse bool,
 	createdAt int64,
-	size int64) (*crdv1.VolumeSnapshotContent, error) {
-	klog.V(5).Infof("updateSnapshotContentStatus: updating VolumeSnapshotContent [%s], snapshotHandle %s, readyToUse %v, createdAt %v, size %d", content.Name, snapshotHandle, readyToUse, createdAt, size)
+	size int64,
+	groupSnapshotID string) (*crdv1.VolumeSnapshotContent, error) {
+	klog.V(5).Infof("updateSnapshotContentStatus: updating VolumeSnapshotContent [%s], snapshotHandle %s, readyToUse %v, createdAt %v, size %d, groupSnapshotID %s", content.Name, snapshotHandle, readyToUse, createdAt, size, groupSnapshotID)
 
 	contentObj, err := ctrl.clientset.SnapshotV1().VolumeSnapshotContents().Get(context.TODO(), content.Name, metav1.GetOptions{})
 	if err != nil {
@@ -445,6 +447,9 @@ func (ctrl *csiSnapshotSideCarController) updateSnapshotContentStatus(
 			ReadyToUse:     &readyToUse,
 			CreationTime:   &createdAt,
 			RestoreSize:    &size,
+		}
+		if groupSnapshotID != "" {
+			newStatus.VolumeGroupSnapshotHandle = &groupSnapshotID
 		}
 		updated = true
 	} else {
@@ -466,6 +471,10 @@ func (ctrl *csiSnapshotSideCarController) updateSnapshotContentStatus(
 		}
 		if newStatus.RestoreSize == nil {
 			newStatus.RestoreSize = &size
+			updated = true
+		}
+		if newStatus.VolumeGroupSnapshotHandle == nil && groupSnapshotID != "" {
+			newStatus.VolumeGroupSnapshotHandle = &groupSnapshotID
 			updated = true
 		}
 	}
@@ -558,10 +567,16 @@ func (ctrl csiSnapshotSideCarController) removeContentFinalizer(content *crdv1.V
 		// the finalizer does not exit, return directly
 		return nil
 	}
+	var patches []utils.PatchOp
 	contentClone := content.DeepCopy()
-	contentClone.ObjectMeta.Finalizers = utils.RemoveString(contentClone.ObjectMeta.Finalizers, utils.VolumeSnapshotContentFinalizer)
+	patches = append(patches,
+		utils.PatchOp{
+			Op:    "replace",
+			Path:  "/metadata/finalizers",
+			Value: utils.RemoveString(contentClone.ObjectMeta.Finalizers, utils.VolumeSnapshotContentFinalizer),
+		})
 
-	updatedContent, err := ctrl.clientset.SnapshotV1().VolumeSnapshotContents().Update(context.TODO(), contentClone, metav1.UpdateOptions{})
+	updatedContent, err := utils.PatchVolumeSnapshotContent(contentClone, patches, ctrl.clientset)
 	if err != nil {
 		return newControllerUpdateError(content.Name, err.Error())
 	}
@@ -654,9 +669,15 @@ func (ctrl csiSnapshotSideCarController) removeAnnVolumeSnapshotBeingCreated(con
 		return content, nil
 	}
 	contentClone := content.DeepCopy()
-	delete(contentClone.ObjectMeta.Annotations, utils.AnnVolumeSnapshotBeingCreated)
+	annotationPatchPath := strings.ReplaceAll(utils.AnnVolumeSnapshotBeingCreated, "/", "~1")
 
-	updatedContent, err := ctrl.clientset.SnapshotV1().VolumeSnapshotContents().Update(context.TODO(), contentClone, metav1.UpdateOptions{})
+	var patches []utils.PatchOp
+	patches = append(patches, utils.PatchOp{
+		Op:   "remove",
+		Path: "/metadata/annotations/" + annotationPatchPath,
+	})
+
+	updatedContent, err := utils.PatchVolumeSnapshotContent(contentClone, patches, ctrl.clientset)
 	if err != nil {
 		return content, newControllerUpdateError(content.Name, err.Error())
 	}

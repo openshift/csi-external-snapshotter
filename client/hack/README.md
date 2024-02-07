@@ -26,7 +26,7 @@ Make sure to run this script after making changes to /client/apis/volumesnapshot
     ```
 * Checkout latest release version
     ```bash
-    git checkout v0.28.1
+    git checkout v0.29.1
     ```
 
 * Ensure the file `generate-groups.sh` exists
@@ -46,9 +46,9 @@ Once you run the script, you will get an output as follows:
     
 ```bash
     Generating deepcopy funcs
-    Generating clientset for volumesnapshot:v1 at github.com/kubernetes-csi/external-snapshotter/client/v6/clientset
-    Generating listers for volumesnapshot:v1 at github.com/kubernetes-csi/external-snapshotter/client/v6/listers
-    Generating informers for volumesnapshot:v1 at github.com/kubernetes-csi/external-snapshotter/client/v6/informers
+    Generating clientset for volumesnapshot:v1 at github.com/kubernetes-csi/external-snapshotter/client/v7/clientset
+    Generating listers for volumesnapshot:v1 at github.com/kubernetes-csi/external-snapshotter/client/v7/listers
+    Generating informers for volumesnapshot:v1 at github.com/kubernetes-csi/external-snapshotter/client/v7/informers
     
 ```
 
@@ -65,16 +65,6 @@ Follow these steps to update the CRD:
 * Run ./hack/update-crd.sh from client directory, new yaml files should have been created under ./config/crd/
 
 * Add api-approved.kubernetes.io annotation value in all yaml files in the metadata section with the PR where the API is approved by the API reviewers. The current approved PR for snapshot v1 API is https://github.com/kubernetes-csi/external-snapshotter/pull/419. Refer to https://github.com/kubernetes/enhancements/pull/1111 for details about this annotation.
-
-* Remove any metadata sections from the yaml file which does not belong to the generated type.
-For example, the following command will add a metadata section for a nested object, remove any newly added metadata sections. TODO(xiangqian): this is to make sure the generated CRD is compatible with apiextensions.k8s.io/v1. Once controller-gen supports generating CRD with apiextensions.k8s.io/v1, switch to use the correct version of controller-gen and remove the last step from this README.
-
-```bash
-./hack/update-crd.sh; git diff
-+        metadata:
-+          description: 'Standard object''s metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata'
-           type: object
-```
 
 * Update the restoreSize property to string in snapshot.storage.k8s.io_volumesnapshots.yaml
 
@@ -154,7 +144,7 @@ Update the restoreSize property to use type string only:
 
 * Add the VolumeSnapshot namespace to the `additionalPrinterColumns` section. Refer https://github.com/kubernetes-csi/external-snapshotter/pull/535 for more details.
 
-* In `client/config/crd/groupsnapshot.storage.k8s.io_volumegroupsnapshotcontents.yaml `, we need to add the `oneOf` constraint to make sure only one of `persistentVolumeNames` and `volumeGroupSnapshotHandle` is specified in the `source` field of the `spec` of `VolumeGroupSnapshotContent`.
+* In `client/config/crd/groupsnapshot.storage.k8s.io_volumegroupsnapshotcontents.yaml `, we need to add the `oneOf` constraint to make sure only one of `volumeHandles` and `groupSnapshotHandles` is specified in the `source` field of the `spec` of `VolumeGroupSnapshotContent`.
 
 ```bash
               source:
@@ -162,22 +152,41 @@ Update the restoreSize property to use type string only:
                   dynamically provisioned or already exists, and just requires a Kubernetes
                   object representation. This field is immutable after creation. Required.
                 properties:
-                  persistentVolumeNames:
-                    description: PersistentVolumeNames is a list of names of PersistentVolumes
-                      to be snapshotted together. It is specified for dynamic provisioning
-                      of the VolumeGroupSnapshot. This field is immutable.
+                  groupSnapshotHandles:
+                    description: GroupSnapshotHandles specifies the CSI "group_snapshot_id"
+                      of a pre-existing group snapshot and a list of CSI "snapshot_id"
+                      of pre-existing snapshots on the underlying storage system for
+                      which a Kubernetes object representation was (or should be)
+                      created. This field is immutable.
+                    properties:
+                      volumeGroupSnapshotHandle:
+                        description: VolumeGroupSnapshotHandle specifies the CSI "group_snapshot_id"
+                          of a pre-existing group snapshot on the underlying storage
+                          system for which a Kubernetes object representation was
+                          (or should be) created. This field is immutable. Required.
+                        type: string
+                      volumeSnapshotHandles:
+                        description: VolumeSnapshotHandles is a list of CSI "snapshot_id"
+                          of pre-existing snapshots on the underlying storage system
+                          for which Kubernetes objects representation were (or should
+                          be) created. This field is immutable. Required.
+                        items:
+                          type: string
+                        type: array
+                    required:
+                    - volumeGroupSnapshotHandle
+                    - volumeSnapshotHandles
+                    type: object
+                  volumeHandles:
+                    description: VolumeHandles is a list of volume handles on the
+                      backend to be snapshotted together. It is specified for dynamic
+                      provisioning of the VolumeGroupSnapshot. This field is immutable.
                     items:
                       type: string
                     type: array
-                  volumeGroupSnapshotHandle:
-                    description: VolumeGroupSnapshotHandle specifies the CSI "group_snapshot_id"
-                      of a pre-existing group snapshot on the underlying storage system
-                      for which a Kubernetes object representation was (or should
-                      be) created. This field is immutable.
-                    type: string
                 type: object
                 oneOf:
-                - required: ["persistentVolumeNames"]
-                - required: ["volumeGroupSnapshotHandle"]
+                - required: ["volumeHandles"]
+                - required: ["groupSnapshotHandles"]
               volumeGroupSnapshotClassName:
 ```

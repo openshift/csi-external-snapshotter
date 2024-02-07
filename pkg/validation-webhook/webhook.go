@@ -25,12 +25,12 @@ import (
 	"net/http"
 	"os"
 
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned"
-	groupsnapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v6/listers/volumegroupsnapshot/v1alpha1"
-	snapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v6/listers/volumesnapshot/v1"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned"
+	groupsnapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v7/listers/volumegroupsnapshot/v1alpha1"
+	snapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v7/listers/volumesnapshot/v1"
 	"github.com/spf13/cobra"
 
-	informers "github.com/kubernetes-csi/external-snapshotter/client/v6/informers/externalversions"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v7/informers/externalversions"
 	v1 "k8s.io/api/admission/v1"
 	"k8s.io/api/admission/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,11 +40,12 @@ import (
 )
 
 var (
-	certFile                    string
-	keyFile                     string
-	kubeconfigFile              string
-	port                        int
-	preventVolumeModeConversion bool
+	certFile                         string
+	keyFile                          string
+	kubeconfigFile                   string
+	port                             int
+	preventVolumeModeConversion      bool
+	enableVolumeGroupSnapshotWebhook bool
 )
 
 // CmdWebhook is used by Cobra.
@@ -70,7 +71,9 @@ func init() {
 	// Add optional flag for kubeconfig
 	CmdWebhook.Flags().StringVar(&kubeconfigFile, "kubeconfig", "", "kubeconfig file to use for volumesnapshotclasses")
 	CmdWebhook.Flags().BoolVar(&preventVolumeModeConversion, "prevent-volume-mode-conversion",
-		false, "Prevents an unauthorised user from modifying the volume mode when creating a PVC from an existing VolumeSnapshot.")
+		true, "Prevents an unauthorised user from modifying the volume mode when creating a PVC from an existing VolumeSnapshot.")
+	CmdWebhook.Flags().BoolVar(&enableVolumeGroupSnapshotWebhook, "enable-volume-group-snapshot-webhook",
+		false, "Enables webhook for VolumeGroupSnapshot, VolumeGroupSnapshotContent and VolumeGroupSnapshotClass.")
 }
 
 // admitv1beta1Func handles a v1beta1 admission
@@ -217,14 +220,18 @@ func startServer(
 	snapshotWebhook := serveSnapshotWebhook{
 		lister: vscLister,
 	}
-	groupSnapshotWebhook := serveGroupSnapshotWebhook{
-		lister: vgscLister,
-	}
 
 	fmt.Println("Starting webhook server")
 	mux := http.NewServeMux()
 	mux.Handle("/volumesnapshot", snapshotWebhook)
-	mux.Handle("/volumegroupsnapshot", groupSnapshotWebhook)
+
+	if enableVolumeGroupSnapshotWebhook {
+		groupSnapshotWebhook := serveGroupSnapshotWebhook{
+			lister: vgscLister,
+		}
+		mux.Handle("/volumegroupsnapshot", groupSnapshotWebhook)
+	}
+
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, req *http.Request) { w.Write([]byte("ok")) })
 	srv := &http.Server{
 		Handler:   mux,
@@ -267,7 +274,10 @@ func main(cmd *cobra.Command, args []string) {
 
 	factory := informers.NewSharedInformerFactory(snapClient, 0)
 	snapshotLister := factory.Snapshot().V1().VolumeSnapshotClasses().Lister()
-	groupSnapshotLister := factory.Groupsnapshot().V1alpha1().VolumeGroupSnapshotClasses().Lister()
+	var groupSnapshotLister groupsnapshotlisters.VolumeGroupSnapshotClassLister
+	if enableVolumeGroupSnapshotWebhook {
+		groupSnapshotLister = factory.Groupsnapshot().V1alpha1().VolumeGroupSnapshotClasses().Lister()
+	}
 
 	// Start the informers
 	factory.Start(ctx.Done())

@@ -27,7 +27,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/kubernetes-csi/csi-lib-utils/connection"
 	"github.com/kubernetes-csi/csi-lib-utils/metrics"
-	"github.com/kubernetes-csi/csi-test/v4/driver"
+	"github.com/kubernetes-csi/csi-test/v5/driver"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -468,7 +468,7 @@ func TestGetSnapshotStatus(t *testing.T) {
 		}
 
 		s := NewSnapshotter(csiConn)
-		ready, createTime, size, err := s.GetSnapshotStatus(context.Background(), test.snapshotID, test.snapshotterListCredentials)
+		ready, createTime, size, _, err := s.GetSnapshotStatus(context.Background(), test.snapshotID, test.snapshotterListCredentials)
 		if test.expectError && err == nil {
 			t.Errorf("test %q: Expected error, got none", test.name)
 		}

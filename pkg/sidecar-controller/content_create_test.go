@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v6/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/utils"
 	v1 "k8s.io/api/core/v1"
 )
 
@@ -49,7 +49,7 @@ func TestSyncContent(t *testing.T) {
 					readyToUse:   true,
 				},
 			},
-			expectedListCalls: []listCall{{"sid1-1", map[string]string{}, true, time.Now(), 1, nil}},
+			expectedListCalls: []listCall{{"sid1-1", map[string]string{}, true, time.Now(), 1, nil, ""}},
 			expectSuccess:     true,
 			errors:            noerrors,
 			test:              testSyncContent,
@@ -78,7 +78,7 @@ func TestSyncContent(t *testing.T) {
 					size:         defaultSize,
 				},
 			},
-			expectedListCalls: []listCall{{"sid1-2", map[string]string{}, true, time.Now(), 1, nil}},
+			expectedListCalls: []listCall{{"sid1-2", map[string]string{}, true, time.Now(), 1, nil, ""}},
 			expectSuccess:     true,
 			errors:            noerrors,
 			test:              testSyncContent,
@@ -194,7 +194,7 @@ func TestSyncContent(t *testing.T) {
 					readyToUse:   true,
 				},
 			},
-			expectedListCalls: []listCall{{"sid1-6", map[string]string{}, true, time.Now(), 1, nil}},
+			expectedListCalls: []listCall{{"sid1-6", map[string]string{}, true, time.Now(), 1, nil, ""}},
 			errors:            noerrors,
 			test:              testSyncContent,
 		},
