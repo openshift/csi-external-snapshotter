@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"reflect"
 	sysruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,14 +32,14 @@ import (
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumesnapshot/v1"
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned"
-	"github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned/fake"
-	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned/scheme"
-	informers "github.com/kubernetes-csi/external-snapshotter/client/v7/informers/externalversions"
-	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v7/listers/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/metrics"
-	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned"
+	"github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned/fake"
+	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned/scheme"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions"
+	storagelisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/metrics"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/utils"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1496,7 +1497,7 @@ func evaluateFinalizerTests(ctrl *csiSnapshotCommonController, reactor *snapshot
 		if funcName == "testAddPVCFinalizer" {
 			for _, pvc := range reactor.claims {
 				if test.initialClaims[0].Name == pvc.Name {
-					if !utils.ContainsString(test.initialClaims[0].ObjectMeta.Finalizers, utils.PVCFinalizer) && utils.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer) {
+					if !slices.Contains(test.initialClaims[0].ObjectMeta.Finalizers, utils.PVCFinalizer) && slices.Contains(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer) {
 						klog.V(4).Infof("test %q succeeded. PVCFinalizer is added to PVC %s", test.name, pvc.Name)
 						bHasPVCFinalizer = true
 					}
@@ -1511,7 +1512,7 @@ func evaluateFinalizerTests(ctrl *csiSnapshotCommonController, reactor *snapshot
 		if funcName == "testRemovePVCFinalizer" {
 			for _, pvc := range reactor.claims {
 				if test.initialClaims[0].Name == pvc.Name {
-					if utils.ContainsString(test.initialClaims[0].ObjectMeta.Finalizers, utils.PVCFinalizer) && !utils.ContainsString(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer) {
+					if slices.Contains(test.initialClaims[0].ObjectMeta.Finalizers, utils.PVCFinalizer) && !slices.Contains(pvc.ObjectMeta.Finalizers, utils.PVCFinalizer) {
 						klog.V(4).Infof("test %q succeeded. PVCFinalizer is removed from PVC %s", test.name, pvc.Name)
 						bHasPVCFinalizer = false
 					}
@@ -1526,10 +1527,10 @@ func evaluateFinalizerTests(ctrl *csiSnapshotCommonController, reactor *snapshot
 		if funcName == "testAddSnapshotFinalizer" {
 			for _, snapshot := range reactor.snapshots {
 				if test.initialSnapshots[0].Name == snapshot.Name {
-					if !utils.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) &&
-						utils.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) &&
-						!utils.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) &&
-						utils.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) {
+					if !slices.Contains(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) &&
+						slices.Contains(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) &&
+						!slices.Contains(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) &&
+						slices.Contains(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) {
 						klog.V(4).Infof("test %q succeeded. Finalizers are added to snapshot %s", test.name, snapshot.Name)
 						bHasSnapshotFinalizer = true
 					}
@@ -1544,10 +1545,10 @@ func evaluateFinalizerTests(ctrl *csiSnapshotCommonController, reactor *snapshot
 		if funcName == "testRemoveSnapshotFinalizer" {
 			for _, snapshot := range reactor.snapshots {
 				if test.initialSnapshots[0].Name == snapshot.Name {
-					if utils.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) &&
-						!utils.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) &&
-						utils.ContainsString(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) &&
-						!utils.ContainsString(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) {
+					if slices.Contains(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) &&
+						!slices.Contains(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotBoundFinalizer) &&
+						slices.Contains(test.initialSnapshots[0].ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) &&
+						!slices.Contains(snapshot.ObjectMeta.Finalizers, utils.VolumeSnapshotAsSourceFinalizer) {
 
 						klog.V(4).Infof("test %q succeeded. SnapshotFinalizer is removed from Snapshot %s", test.name, snapshot.Name)
 						bHasSnapshotFinalizer = false

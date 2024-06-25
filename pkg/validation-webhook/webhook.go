@@ -25,12 +25,12 @@ import (
 	"net/http"
 	"os"
 
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned"
-	groupsnapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v7/listers/volumegroupsnapshot/v1alpha1"
-	snapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v7/listers/volumesnapshot/v1"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned"
+	groupsnapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumegroupsnapshot/v1alpha1"
+	snapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumesnapshot/v1"
 	"github.com/spf13/cobra"
 
-	informers "github.com/kubernetes-csi/external-snapshotter/client/v7/informers/externalversions"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions"
 	v1 "k8s.io/api/admission/v1"
 	"k8s.io/api/admission/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -73,7 +73,7 @@ func init() {
 	CmdWebhook.Flags().BoolVar(&preventVolumeModeConversion, "prevent-volume-mode-conversion",
 		true, "Prevents an unauthorised user from modifying the volume mode when creating a PVC from an existing VolumeSnapshot.")
 	CmdWebhook.Flags().BoolVar(&enableVolumeGroupSnapshotWebhook, "enable-volume-group-snapshot-webhook",
-		false, "Enables webhook for VolumeGroupSnapshot, VolumeGroupSnapshotContent and VolumeGroupSnapshotClass.")
+		false, "Enables webhook for VolumeGroupSnapshotClass.")
 }
 
 // admitv1beta1Func handles a v1beta1 admission
