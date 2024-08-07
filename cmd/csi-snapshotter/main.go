@@ -43,14 +43,14 @@ import (
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	"github.com/kubernetes-csi/csi-lib-utils/metrics"
 	csirpc "github.com/kubernetes-csi/csi-lib-utils/rpc"
-	controller "github.com/kubernetes-csi/external-snapshotter/v7/pkg/sidecar-controller"
-	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/snapshotter"
+	controller "github.com/kubernetes-csi/external-snapshotter/v8/pkg/sidecar-controller"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/snapshotter"
 
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned"
-	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned/scheme"
-	informers "github.com/kubernetes-csi/external-snapshotter/client/v7/informers/externalversions"
-	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/group_snapshotter"
-	utils "github.com/kubernetes-csi/external-snapshotter/v7/pkg/utils"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned"
+	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned/scheme"
+	informers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/group_snapshotter"
+	utils "github.com/kubernetes-csi/external-snapshotter/v8/pkg/utils"
 )
 
 const (
@@ -165,7 +165,9 @@ func main() {
 
 	// Connect to CSI.
 	metricsManager := metrics.NewCSIMetricsManager("" /* driverName */)
+	ctx := context.Background()
 	csiConn, err := connection.Connect(
+		ctx,
 		*csiAddress,
 		metricsManager,
 		connection.OnConnectionLoss(connection.ExitOnConnectionLoss()))
@@ -175,11 +177,11 @@ func main() {
 	}
 
 	// Pass a context with a timeout
-	ctx, cancel := context.WithTimeout(context.Background(), *csiTimeout)
+	tctx, cancel := context.WithTimeout(ctx, *csiTimeout)
 	defer cancel()
 
 	// Find driver name
-	driverName, err := csirpc.GetDriverName(ctx, csiConn)
+	driverName, err := csirpc.GetDriverName(tctx, csiConn)
 	if err != nil {
 		klog.Errorf("error getting CSI driver name: %v", err)
 		os.Exit(1)
@@ -202,13 +204,15 @@ func main() {
 	}
 
 	// Check it's ready
-	if err = csirpc.ProbeForever(csiConn, *csiTimeout); err != nil {
+	if err = csirpc.ProbeForever(ctx, csiConn, *csiTimeout); err != nil {
 		klog.Errorf("error waiting for CSI driver to be ready: %v", err)
 		os.Exit(1)
 	}
 
 	// Find out if the driver supports create/delete snapshot.
-	supportsCreateSnapshot, err := supportsControllerCreateSnapshot(ctx, csiConn)
+	tctx, cancel = context.WithTimeout(ctx, *csiTimeout)
+	defer cancel()
+	supportsCreateSnapshot, err := supportsControllerCreateSnapshot(tctx, csiConn)
 	if err != nil {
 		klog.Errorf("error determining if driver supports create/delete snapshot operations: %v", err)
 		os.Exit(1)
@@ -228,7 +232,9 @@ func main() {
 	snapShotter := snapshotter.NewSnapshotter(csiConn)
 	var groupSnapshotter group_snapshotter.GroupSnapshotter
 	if *enableVolumeGroupSnapshots {
-		supportsCreateVolumeGroupSnapshot, err := supportsGroupControllerCreateVolumeGroupSnapshot(ctx, csiConn)
+		tctx, cancel = context.WithTimeout(ctx, *csiTimeout)
+		defer cancel()
+		supportsCreateVolumeGroupSnapshot, err := supportsGroupControllerCreateVolumeGroupSnapshot(tctx, csiConn)
 		if err != nil {
 			klog.Errorf("error determining if driver supports create/delete group snapshot operations: %v", err)
 		} else if !supportsCreateVolumeGroupSnapshot {

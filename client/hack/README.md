@@ -1,8 +1,10 @@
 # Scripts User Guide
 
 This README documents:
+
 * What update-crd.sh and update-generated-code.sh do
 * When and how to use them
+* The CRD CEL rules test suite
 
 ## update-generated-code.sh
 
@@ -26,13 +28,13 @@ Make sure to run this script after making changes to /client/apis/volumesnapshot
     ```
 * Checkout latest release version
     ```bash
-    git checkout v0.29.1
+    git checkout v0.30.0
     ```
 
-* Ensure the file `generate-groups.sh` exists
+* Ensure the file `kube_codegen.sh` exists
 
     ```bash
-    ls ${GOPATH}/src/k8s.io/code-generator/generate-groups.sh
+    ls ${GOPATH}/src/k8s.io/code-generator/kube_codegen.sh
     ```
   
 Update generated client code in external-snapshotter
@@ -42,14 +44,13 @@ Update generated client code in external-snapshotter
     ./hack/update-generated-code.sh
 ``` 
 
-Once you run the script, you will get an output as follows:
+Once you run the script, the code will be generated for volumesnapshot:v1 and volumegroupsnapshot:v1alpha1, and you will get an output as follows:
     
 ```bash
-    Generating deepcopy funcs
-    Generating clientset for volumesnapshot:v1 at github.com/kubernetes-csi/external-snapshotter/client/v7/clientset
-    Generating listers for volumesnapshot:v1 at github.com/kubernetes-csi/external-snapshotter/client/v7/listers
-    Generating informers for volumesnapshot:v1 at github.com/kubernetes-csi/external-snapshotter/client/v7/informers
-    
+Generating deepcopy code for 2 targets
+Generating client code for 2 targets
+Generating lister code for 2 targets
+Generating informer code for 2 targets
 ```
 
 ## update-crd.sh
@@ -58,13 +59,13 @@ NOTE: We need to keep both v1beta1 and v1 snapshot APIs but set served and stora
 
 This is the script to update CRD yaml files under /client/config/crd/ based on types.go file.
 
-Make sure to run this script after making changes to /client/apis/volumesnapshot/v1/types.go.
+Make sure to run this script after making changes to /client/apis.
 
 Follow these steps to update the CRD:
 
 * Run ./hack/update-crd.sh from client directory, new yaml files should have been created under ./config/crd/
 
-* Add api-approved.kubernetes.io annotation value in all yaml files in the metadata section with the PR where the API is approved by the API reviewers. The current approved PR for snapshot v1 API is https://github.com/kubernetes-csi/external-snapshotter/pull/419. Refer to https://github.com/kubernetes/enhancements/pull/1111 for details about this annotation.
+* Add api-approved.kubernetes.io annotation value in all yaml files in the metadata section with the PR where the API is approved by the API reviewers. Refer to https://github.com/kubernetes/enhancements/pull/1111 for details about this annotation.
 
 * Update the restoreSize property to string in snapshot.storage.k8s.io_volumesnapshots.yaml
 
@@ -104,89 +105,34 @@ Update the restoreSize property to use type string only:
 
 ```
 
-* In `client/config/crd/snapshot.storage.k8s.io_volumesnapshots.yaml`, we need to add the `oneOf` constraint to make sure only one of `persistentVolumeClaimName` and `volumeSnapshotContentName` is specified in the `source` field of the `spec` of `VolumeSnapshot`.
+## Test suite
 
-```bash
-              source:
-                description: source specifies where a snapshot will be created from. This field is immutable after creation. Required.
-                properties:
-                  persistentVolumeClaimName:
-                    description: persistentVolumeClaimName specifies the name of the PersistentVolumeClaim object representing the volume from which a snapshot should be created. This PVC is assumed to be in the same namespace as the VolumeSnapshot object. This field should be set if the snapshot does not exists, and should be created. This field is immutable.
-                    type: string
-                  volumeSnapshotContentName:
-                    description: volumeSnapshotContentName specifies the name of a pre-existing VolumeSnapshotContent object representing an existing volume snapshot. This field should be set if the snapshot already exists. This field is immutable.
-                    type: string
-                type: object
-                oneOf:
-                - required: ["persistentVolumeClaimName"]
-                - required: ["volumeSnapshotContentName"]
-              volumeSnapshotClassName:
+The `test-suite` directory contains several test cases that are useful to
+validate if the CEL rules that are included in the CRD definitions
+are correctly working.
+
+### Prerequisites
+
+- Kubectl access to a cluster with the installed CRDs
+- Kubernetes >= 1.30
+
+### How to use it
+
 ```
+  ./hack/run-cel-tests.sh
 
-* In `client/config/crd/snapshot.storage.k8s.io_volumesnapshotcontents.yaml `, we need to add the `oneOf` constraint to make sure only one of `snapshotHandle` and `volumeHandle` is specified in the `source` field of the `spec` of `VolumeSnapshotContent`.
+  cel-tests/volumegroupsnapshotcontent/vgsc-change-ref-namespace.post.yaml: SUCCESS
+  cel-tests/volumegroupsnapshotcontent/vgsc-source-volume-to-groupsnapshot.post.yaml: SUCCESS
+  cel-tests/volumegroupsnapshotcontent/vgsc-source-empty.yaml: SUCCESS (expected failure)
+  cel-tests/volumegroupsnapshotcontent/vgsc-change-ref-namespace.pre.yaml: SUCCESS
+  cel-tests/volumegroupsnapshotcontent/vgsc-ref-only-name.yaml: SUCCESS (expected failure)
+  [...]
+  cel-tests/volumegroupsnapshotcontent/vgsc-change-ref-namespace.pre.yaml -> cel-tests/volumegroupsnapshotcontent/vgsc-change-ref-namespace.post.yaml: SUCCESS (expected failure)
+  cel-tests/volumegroupsnapshotcontent/vgsc-source-volume-immutable.pre.yaml -> cel-tests/volumegroupsnapshotcontent/vgsc-source-volume-immutable.post.yaml: SUCCESS (expected failure)
+  cel-tests/volumegroupsnapshotcontent/vgsc-source-volume-to-groupsnapshot.pre.yaml -> cel-tests/volumegroupsnapshotcontent/vgsc-source-volume-to-groupsnapshot.post.yaml: SUCCESS (expected failure)
+  cel-tests/volumegroupsnapshotcontent/vgsc-source-groupsnapshot-immutable.pre.yaml -> cel-tests/volumegroupsnapshotcontent/vgsc-source-groupsnapshot-immutable.post.yaml: SUCCESS (expected failure)
+  [...]
 
-```bash
-              source:
-                description: source specifies from where a snapshot will be created. This field is immutable after creation. Required.
-                properties:
-                  snapshotHandle:
-                    description: snapshotHandle specifies the CSI "snapshot_id" of a pre-existing snapshot on the underlying storage system. This field is immutable.
-                    type: string
-                  volumeHandle:
-                    description: volumeHandle specifies the CSI "volume_id" of the volume from which a snapshot should be dynamically taken from. This field is immutable.
-                    type: string
-                type: object
-                oneOf:
-                - required: ["snapshotHandle"]
-                - required: ["volumeHandle"]
-              sourceVolumeMode:
-```
-
-* Add the VolumeSnapshot namespace to the `additionalPrinterColumns` section. Refer https://github.com/kubernetes-csi/external-snapshotter/pull/535 for more details.
-
-* In `client/config/crd/groupsnapshot.storage.k8s.io_volumegroupsnapshotcontents.yaml `, we need to add the `oneOf` constraint to make sure only one of `volumeHandles` and `groupSnapshotHandles` is specified in the `source` field of the `spec` of `VolumeGroupSnapshotContent`.
-
-```bash
-              source:
-                description: Source specifies whether the snapshot is (or should be)
-                  dynamically provisioned or already exists, and just requires a Kubernetes
-                  object representation. This field is immutable after creation. Required.
-                properties:
-                  groupSnapshotHandles:
-                    description: GroupSnapshotHandles specifies the CSI "group_snapshot_id"
-                      of a pre-existing group snapshot and a list of CSI "snapshot_id"
-                      of pre-existing snapshots on the underlying storage system for
-                      which a Kubernetes object representation was (or should be)
-                      created. This field is immutable.
-                    properties:
-                      volumeGroupSnapshotHandle:
-                        description: VolumeGroupSnapshotHandle specifies the CSI "group_snapshot_id"
-                          of a pre-existing group snapshot on the underlying storage
-                          system for which a Kubernetes object representation was
-                          (or should be) created. This field is immutable. Required.
-                        type: string
-                      volumeSnapshotHandles:
-                        description: VolumeSnapshotHandles is a list of CSI "snapshot_id"
-                          of pre-existing snapshots on the underlying storage system
-                          for which Kubernetes objects representation were (or should
-                          be) created. This field is immutable. Required.
-                        items:
-                          type: string
-                        type: array
-                    required:
-                    - volumeGroupSnapshotHandle
-                    - volumeSnapshotHandles
-                    type: object
-                  volumeHandles:
-                    description: VolumeHandles is a list of volume handles on the
-                      backend to be snapshotted together. It is specified for dynamic
-                      provisioning of the VolumeGroupSnapshot. This field is immutable.
-                    items:
-                      type: string
-                    type: array
-                type: object
-                oneOf:
-                - required: ["volumeHandles"]
-                - required: ["groupSnapshotHandles"]
-              volumeGroupSnapshotClassName:
+  SUCCESS: 90
+  FAILURES: 0
 ```

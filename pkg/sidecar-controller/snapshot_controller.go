@@ -19,6 +19,7 @@ package sidecar_controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,8 +29,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	klog "k8s.io/klog/v2"
 
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/utils"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/utils"
 )
 
 // Design:
@@ -483,8 +484,16 @@ func (ctrl *csiSnapshotSideCarController) updateSnapshotContentStatus(
 
 	if updated {
 		contentClone := contentObj.DeepCopy()
-		contentClone.Status = newStatus
-		newContent, err := ctrl.clientset.SnapshotV1().VolumeSnapshotContents().UpdateStatus(context.TODO(), contentClone, metav1.UpdateOptions{})
+
+		patches := []utils.PatchOp{
+			{
+				Op:    "replace",
+				Path:  "/status",
+				Value: newStatus,
+			},
+		}
+
+		newContent, err := utils.PatchVolumeSnapshotContent(contentClone, patches, ctrl.clientset, "status")
 		if err != nil {
 			return contentObj, newControllerUpdateError(content.Name, err.Error())
 		}
@@ -565,7 +574,7 @@ func (ctrl *csiSnapshotSideCarController) GetCredentialsFromAnnotation(content *
 // removeContentFinalizer removes the VolumeSnapshotContentFinalizer from a
 // content if there exists one.
 func (ctrl csiSnapshotSideCarController) removeContentFinalizer(content *crdv1.VolumeSnapshotContent) error {
-	if !utils.ContainsString(content.ObjectMeta.Finalizers, utils.VolumeSnapshotContentFinalizer) {
+	if !slices.Contains(content.ObjectMeta.Finalizers, utils.VolumeSnapshotContentFinalizer) {
 		// the finalizer does not exit, return directly
 		return nil
 	}

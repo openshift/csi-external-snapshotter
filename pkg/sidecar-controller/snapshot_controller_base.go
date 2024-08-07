@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/group_snapshotter"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/group_snapshotter"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -34,14 +34,15 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	klog "k8s.io/klog/v2"
 
-	crdv1alpha1 "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumegroupsnapshot/v1alpha1"
-	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumesnapshot/v1"
-	clientset "github.com/kubernetes-csi/external-snapshotter/client/v7/clientset/versioned"
-	groupsnapshotinformers "github.com/kubernetes-csi/external-snapshotter/client/v7/informers/externalversions/volumegroupsnapshot/v1alpha1"
-	snapshotinformers "github.com/kubernetes-csi/external-snapshotter/client/v7/informers/externalversions/volumesnapshot/v1"
-	groupsnapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v7/listers/volumegroupsnapshot/v1alpha1"
-	snapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v7/listers/volumesnapshot/v1"
-	"github.com/kubernetes-csi/external-snapshotter/v7/pkg/snapshotter"
+	crdv1alpha1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumegroupsnapshot/v1alpha1"
+	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
+	clientset "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned"
+	groupsnapshotinformers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions/volumegroupsnapshot/v1alpha1"
+	snapshotinformers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions/volumesnapshot/v1"
+	groupsnapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumegroupsnapshot/v1alpha1"
+	snapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/snapshotter"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/utils"
 )
 
 type csiSnapshotSideCarController struct {
@@ -116,14 +117,11 @@ func NewCSISnapshotSideCarController(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) { ctrl.enqueueContentWork(obj) },
 			UpdateFunc: func(oldObj, newObj interface{}) {
-				// Considering the object is modified more than once during the workflow we are not relying on the
-				// "AnnVolumeSnapshotBeingCreated" annotation. Instead we will just check if newobj status has error
-				// and avoid the immediate re-queue. This allows the retry to happen with exponential backoff.
-				newSnapContent := newObj.(*crdv1.VolumeSnapshotContent)
-				if newSnapContent.Status != nil && newSnapContent.Status.Error != nil {
-					return
+				// Only enqueue updated VolumeSnapshotContent object if it contains a change that may need resync
+				// Ignore changes that cannot necessitate a sync and/or are caused by the sidecar itself
+				if utils.ShouldEnqueueContentChange(oldObj.(*crdv1.VolumeSnapshotContent), newObj.(*crdv1.VolumeSnapshotContent)) {
+					ctrl.enqueueContentWork(newObj)
 				}
-				ctrl.enqueueContentWork(newObj)
 			},
 			DeleteFunc: func(obj interface{}) { ctrl.enqueueContentWork(obj) },
 		},
