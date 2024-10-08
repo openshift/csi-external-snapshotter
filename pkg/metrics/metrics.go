@@ -17,6 +17,7 @@ limitations under the License.
 package metrics
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -107,6 +108,10 @@ type MetricsManager interface {
 	// status - the operation status, if not specified, i.e., status == nil, an
 	//          "Unknown" status of the passed-in operation is assumed.
 	RecordMetrics(op OperationKey, status OperationStatus, driverName string)
+
+	// RecordVolumeGroupSnapshotMetrics records a metric for operations related to
+	// VolumeGroupSnapshot
+	RecordVolumeGroupSnapshotMetrics(op OperationKey, status OperationStatus, driverName string)
 
 	// GetRegistry() returns the metrics.KubeRegistry used by this metrics manager.
 	GetRegistry() k8smetrics.KubeRegistry
@@ -286,16 +291,25 @@ func (opMgr *operationMetricsManager) init() {
 	// While we always maintain the number of operations in flight
 	// for every metrics operation start/finish, if any are leaked,
 	// this scheduled routine will catch any leaked operations.
-	go opMgr.scheduleOpsInFlightMetric()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go opMgr.scheduleOpsInFlightMetric(ctx)
 }
 
-func (opMgr *operationMetricsManager) scheduleOpsInFlightMetric() {
-	for range time.Tick(inFlightCheckInterval) {
-		func() {
-			opMgr.mu.Lock()
-			defer opMgr.mu.Unlock()
-			opMgr.opInFlight.Set(float64(len(opMgr.cache)))
-		}()
+func (opMgr *operationMetricsManager) scheduleOpsInFlightMetric(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			for range time.NewTicker(inFlightCheckInterval).C {
+				func() {
+					opMgr.mu.Lock()
+					defer opMgr.mu.Unlock()
+					opMgr.opInFlight.Set(float64(len(opMgr.cache)))
+				}()
+			}
+		}
 	}
 }
 
