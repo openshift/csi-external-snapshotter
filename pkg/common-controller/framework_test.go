@@ -17,6 +17,7 @@ limitations under the License.
 package common_controller
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1200,6 +1201,7 @@ func newTestController(kubeClient kubernetes.Interface, clientset clientset.Inte
 		informerFactory.Groupsnapshot().V1alpha1().VolumeGroupSnapshotContents(),
 		informerFactory.Groupsnapshot().V1alpha1().VolumeGroupSnapshotClasses(),
 		coreFactory.Core().V1().PersistentVolumeClaims(),
+		coreFactory.Core().V1().PersistentVolumes(),
 		nil,
 		metricsManager,
 		60*time.Second,
@@ -1750,7 +1752,7 @@ func testSyncSnapshot(ctrl *csiSnapshotCommonController, reactor *snapshotReacto
 }
 
 func testSyncGroupSnapshot(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error {
-	return ctrl.syncGroupSnapshot(test.initialGroupSnapshots[0])
+	return ctrl.syncGroupSnapshot(context.TODO(), test.initialGroupSnapshots[0])
 }
 
 func testSyncSnapshotError(ctrl *csiSnapshotCommonController, reactor *snapshotReactor, test controllerTest) error {

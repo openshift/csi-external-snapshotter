@@ -281,7 +281,6 @@ type VolumeGroupSnapshotContentSpec struct {
 	// This field is immutable after creation.
 	// Required.
 	// +kubebuilder:validation:XValidation:rule="has(self.name) && has(self.__namespace__)",message="both volumeGroupSnapshotRef.name and volumeGroupSnapshotRef.namespace must be set"
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="volumeGroupSnapshotRef is immutable"
 	VolumeGroupSnapshotRef core_v1.ObjectReference `json:"volumeGroupSnapshotRef" protobuf:"bytes,1,opt,name=volumeGroupSnapshotRef"`
 
 	// DeletionPolicy determines whether this VolumeGroupSnapshotContent and the
@@ -354,11 +353,11 @@ type VolumeGroupSnapshotContentStatus struct {
 	// +optional
 	Error *snapshotv1.VolumeSnapshotError `json:"error,omitempty" protobuf:"bytes,4,opt,name=error,casttype=VolumeSnapshotError"`
 
-	// PVVolumeSnapshotContentList is the list of pairs of PV and
-	// VolumeSnapshotContent for this group snapshot
-	// The maximum number of allowed snapshots in the group is 100.
+	// VolumeSnapshotHandlePairList is a list of CSI "volume_id" and "snapshot_id"
+	// pair returned by the CSI driver to identify snapshots and their source volumes
+	// on the storage system.
 	// +optional
-	PVVolumeSnapshotContentList []PVVolumeSnapshotContentPair `json:"pvVolumeSnapshotContentList,omitempty" protobuf:"bytes,5,opt,name=pvVolumeSnapshotContentRefList"`
+	VolumeSnapshotHandlePairList []VolumeSnapshotHandlePair `json:"volumeSnapshotHandlePairList,omitempty" protobuf:"bytes,6,opt,name=volumeSnapshotHandlePairList"`
 }
 
 // PVVolumeSnapshotContentPair represent a pair of PV names and
@@ -409,4 +408,15 @@ type GroupSnapshotHandles struct {
 	// This field is immutable.
 	// Required.
 	VolumeSnapshotHandles []string `json:"volumeSnapshotHandles" protobuf:"bytes,2,opt,name=volumeSnapshotHandles"`
+}
+
+// VolumeSnapshotHandlePair defines a pair of a source volume handle and a snapshot handle
+type VolumeSnapshotHandlePair struct {
+	// VolumeHandle is a unique id returned by the CSI driver to identify a volume
+	// on the storage system
+	VolumeHandle string `json:"volumeHandle" protobuf:"bytes,1,opt,name=volumeHandle"`
+
+	// SnapshotHandle is a unique id returned by the CSI driver to identify a volume
+	// snapshot on the storage system
+	SnapshotHandle string `json:"snapshotHandle" protobuf:"bytes,2,opt,name=snapshotHandle"`
 }

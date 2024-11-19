@@ -65,6 +65,9 @@ const (
 	PrefixedSnapshotterListSecretNameKey      = csiParameterPrefix + "snapshotter-list-secret-name"      // Prefixed name key for ListSnapshots secret
 	PrefixedSnapshotterListSecretNamespaceKey = csiParameterPrefix + "snapshotter-list-secret-namespace" // Prefixed namespace key for ListSnapshots secret
 
+	PrefixedGroupSnapshotterGetSecretNameKey      = csiParameterPrefix + "group-snapshotter-get-secret-name"      // Prefixed name key for GetVolumeGroupSnapshot secret
+	PrefixedGroupSnapshotterGetSecretNamespaceKey = csiParameterPrefix + "group-snapshotter-get-secret-namespace" // Prefixed namespace key for GetVolumeGroupSnapshot secret
+
 	PrefixedVolumeSnapshotNameKey        = csiParameterPrefix + "volumesnapshot/name"        // Prefixed VolumeSnapshot name key
 	PrefixedVolumeSnapshotNamespaceKey   = csiParameterPrefix + "volumesnapshot/namespace"   // Prefixed VolumeSnapshot namespace key
 	PrefixedVolumeSnapshotContentNameKey = csiParameterPrefix + "volumesnapshotcontent/name" // Prefixed VolumeSnapshotContent name key
@@ -143,6 +146,10 @@ const (
 	AnnDeletionGroupSecretRefName      = "groupsnapshot.storage.kubernetes.io/deletion-secret-name"
 	AnnDeletionGroupSecretRefNamespace = "groupsnapshot.storage.kubernetes.io/deletion-secret-namespace"
 
+	// VolumeGroupSnapshotNameLabel is applied to VolumeSnapshots that are member
+	// of a VolumeGroupSnapshot, and indicates the name of the latter.
+	VolumeGroupSnapshotNameLabel = "groupsnapshot.storage.k8s.io/volumeGroupSnapshotName"
+
 	// VolumeSnapshotContentInvalidLabel is applied to invalid content as a label key. The value does not matter.
 	// See https://github.com/kubernetes/enhancements/blob/master/keps/sig-storage/177-volume-snapshot/tighten-validation-webhook-crd.md#automatic-labelling-of-invalid-objects
 	VolumeSnapshotContentInvalidLabel = "snapshot.storage.kubernetes.io/invalid-snapshot-content-resource"
@@ -170,6 +177,12 @@ var SnapshotterListSecretParams = secretParamsMap{
 	name:               "SnapshotterList",
 	secretNameKey:      PrefixedSnapshotterListSecretNameKey,
 	secretNamespaceKey: PrefixedSnapshotterListSecretNamespaceKey,
+}
+
+var GroupSnapshotterGetSecretParams = secretParamsMap{
+	name:               "GroupSnapshotterGet",
+	secretNameKey:      PrefixedGroupSnapshotterGetSecretNameKey,
+	secretNamespaceKey: PrefixedGroupSnapshotterGetSecretNamespaceKey,
 }
 
 // Annotations on VolumeSnapshotContent objects entirely controlled by csi-snapshotter
@@ -544,6 +557,8 @@ func RemovePrefixedParameters(param map[string]string) (map[string]string, error
 			case PrefixedSnapshotterSecretNamespaceKey:
 			case PrefixedSnapshotterListSecretNameKey:
 			case PrefixedSnapshotterListSecretNamespaceKey:
+			case PrefixedGroupSnapshotterGetSecretNameKey:
+			case PrefixedGroupSnapshotterGetSecretNamespaceKey:
 			case PrefixedGroupSnapshotterSecretNameKey:
 			case PrefixedGroupSnapshotterSecretNamespaceKey:
 			default:
