@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,18 +37,22 @@ import (
 	"k8s.io/client-go/util/workqueue"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	klog "k8s.io/klog/v2"
 
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	controller "github.com/kubernetes-csi/external-snapshotter/v8/pkg/common-controller"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/features"
 	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/metrics"
 
 	clientset "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned"
 	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned/scheme"
 	informers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	coreinformers "k8s.io/client-go/informers"
+	utilflag "k8s.io/component-base/cli/flag"
 )
 
 // Command line flags
@@ -72,9 +77,9 @@ var (
 	retryIntervalMax              = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval of failed volume snapshot creation or deletion. Default is 5 minutes.")
 	enableDistributedSnapshotting = flag.Bool("enable-distributed-snapshotting", false, "Enables each node to handle snapshotting for the local volumes created on that node")
 	preventVolumeModeConversion   = flag.Bool("prevent-volume-mode-conversion", true, "Prevents an unauthorised user from modifying the volume mode when creating a PVC from an existing VolumeSnapshot.")
-	enableVolumeGroupSnapshots    = flag.Bool("enable-volume-group-snapshots", false, "Enables the volume group snapshot feature, allowing the user to create a snapshot of a group of volumes.")
 
 	retryCRDIntervalMax = flag.Duration("retry-crd-interval-max", 30*time.Second, "Maximum time to wait for CRDs to appear. The default is 30 seconds.")
+	featureGates        map[string]bool
 )
 
 var version = "unknown"
@@ -105,20 +110,20 @@ func ensureCustomResourceDefinitionsExist(client *clientset.Clientset, enableVol
 			return false, nil
 		}
 		if enableVolumeGroupSnapshots {
-			_, err = client.GroupsnapshotV1alpha1().VolumeGroupSnapshots("").List(ctx, listOptions)
+			_, err = client.GroupsnapshotV1beta1().VolumeGroupSnapshots("").List(ctx, listOptions)
 			if err != nil {
-				klog.Errorf("Failed to list v1alpha1 volumegroupsnapshots with error=%+v", err)
+				klog.Errorf("Failed to list v1beta1 volumegroupsnapshots with error=%+v", err)
 				return false, nil
 			}
 
-			_, err = client.GroupsnapshotV1alpha1().VolumeGroupSnapshotClasses().List(ctx, listOptions)
+			_, err = client.GroupsnapshotV1beta1().VolumeGroupSnapshotClasses().List(ctx, listOptions)
 			if err != nil {
-				klog.Errorf("Failed to list v1alpha1 volumegroupsnapshotclasses with error=%+v", err)
+				klog.Errorf("Failed to list v1beta1 volumegroupsnapshotclasses with error=%+v", err)
 				return false, nil
 			}
-			_, err = client.GroupsnapshotV1alpha1().VolumeGroupSnapshotContents().List(ctx, listOptions)
+			_, err = client.GroupsnapshotV1beta1().VolumeGroupSnapshotContents().List(ctx, listOptions)
 			if err != nil {
-				klog.Errorf("Failed to list v1alpha1 volumegroupsnapshotcontents with error=%+v", err)
+				klog.Errorf("Failed to list v1beta1 volumegroupsnapshotcontents with error=%+v", err)
 				return false, nil
 			}
 		}
@@ -146,9 +151,16 @@ func ensureCustomResourceDefinitionsExist(client *clientset.Clientset, enableVol
 }
 
 func main() {
+	flag.Var(utilflag.NewMapStringBool(&featureGates), "feature-gates", "Comma-seprated list of key=value pairs that describe feature gates for alpha/experimental features. "+
+		"Options are:\n"+strings.Join(utilfeature.DefaultFeatureGate.KnownFeatures(), "\n"))
+
 	klog.InitFlags(nil)
 	flag.Set("logtostderr", "true")
 	flag.Parse()
+
+	if err := utilfeature.DefaultMutableFeatureGate.SetFromMap(featureGates); err != nil {
+		klog.Fatal("Error while parsing feature gates: ", err)
+	}
 
 	if *showVersion {
 		fmt.Println(os.Args[0], version)
@@ -166,7 +178,9 @@ func main() {
 	config.QPS = (float32)(*kubeAPIQPS)
 	config.Burst = *kubeAPIBurst
 
-	kubeClient, err := kubernetes.NewForConfig(config)
+	coreConfig := rest.CopyConfig(config)
+	coreConfig.ContentType = runtime.ContentTypeProtobuf
+	kubeClient, err := kubernetes.NewForConfig(coreConfig)
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
@@ -211,23 +225,24 @@ func main() {
 		factory.Snapshot().V1().VolumeSnapshots(),
 		factory.Snapshot().V1().VolumeSnapshotContents(),
 		factory.Snapshot().V1().VolumeSnapshotClasses(),
-		factory.Groupsnapshot().V1alpha1().VolumeGroupSnapshots(),
-		factory.Groupsnapshot().V1alpha1().VolumeGroupSnapshotContents(),
-		factory.Groupsnapshot().V1alpha1().VolumeGroupSnapshotClasses(),
+		factory.Groupsnapshot().V1beta1().VolumeGroupSnapshots(),
+		factory.Groupsnapshot().V1beta1().VolumeGroupSnapshotContents(),
+		factory.Groupsnapshot().V1beta1().VolumeGroupSnapshotClasses(),
 		coreFactory.Core().V1().PersistentVolumeClaims(),
+		coreFactory.Core().V1().PersistentVolumes(),
 		nodeInformer,
 		metricsManager,
 		*resyncPeriod,
-		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
-		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
-		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
-		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
+		workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
+		workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
+		workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
+		workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
 		*enableDistributedSnapshotting,
 		*preventVolumeModeConversion,
-		*enableVolumeGroupSnapshots,
+		utilfeature.DefaultFeatureGate.Enabled(features.VolumeGroupSnapshot),
 	)
 
-	if err := ensureCustomResourceDefinitionsExist(snapClient, *enableVolumeGroupSnapshots); err != nil {
+	if err := ensureCustomResourceDefinitionsExist(snapClient, utilfeature.DefaultFeatureGate.Enabled(features.VolumeGroupSnapshot)); err != nil {
 		klog.Errorf("Exiting due to failure to ensure CRDs exist during startup: %+v", err)
 		os.Exit(1)
 	}
