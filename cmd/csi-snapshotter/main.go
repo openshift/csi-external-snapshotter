@@ -30,6 +30,8 @@ import (
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	coreinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -43,8 +45,10 @@ import (
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	"github.com/kubernetes-csi/csi-lib-utils/metrics"
 	csirpc "github.com/kubernetes-csi/csi-lib-utils/rpc"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/features"
 	controller "github.com/kubernetes-csi/external-snapshotter/v8/pkg/sidecar-controller"
 	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/snapshotter"
+	utilflag "k8s.io/component-base/cli/flag"
 
 	clientset "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned"
 	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned/scheme"
@@ -79,16 +83,15 @@ var (
 	kubeAPIQPS   = flag.Float64("kube-api-qps", 5, "QPS to use while communicating with the kubernetes apiserver. Defaults to 5.0.")
 	kubeAPIBurst = flag.Int("kube-api-burst", 10, "Burst to use while communicating with the kubernetes apiserver. Defaults to 10.")
 
-	metricsAddress             = flag.String("metrics-address", "", "(deprecated) The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled. Only one of `--metrics-address` and `--http-endpoint` can be set.")
-	httpEndpoint               = flag.String("http-endpoint", "", "The TCP network address where the HTTP server for diagnostics, including metrics and leader election health check, will listen (example: `:8080`). The default is empty string, which means the server is disabled. Only one of `--metrics-address` and `--http-endpoint` can be set.")
-	metricsPath                = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
-	retryIntervalStart         = flag.Duration("retry-interval-start", time.Second, "Initial retry interval of failed volume snapshot creation or deletion. It doubles with each failure, up to retry-interval-max. Default is 1 second.")
-	retryIntervalMax           = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval of failed volume snapshot creation or deletion. Default is 5 minutes.")
-	enableNodeDeployment       = flag.Bool("node-deployment", false, "Enables deploying the sidecar controller together with a CSI driver on nodes to manage snapshots for node-local volumes.")
-	enableVolumeGroupSnapshots = flag.Bool("enable-volume-group-snapshots", false, "Enables the volume group snapshot feature, allowing the user to create a snapshot of a group of volumes.")
-
+	metricsAddress              = flag.String("metrics-address", "", "(deprecated) The TCP network address where the prometheus metrics endpoint will listen (example: `:8080`). The default is empty string, which means metrics endpoint is disabled. Only one of `--metrics-address` and `--http-endpoint` can be set.")
+	httpEndpoint                = flag.String("http-endpoint", "", "The TCP network address where the HTTP server for diagnostics, including metrics and leader election health check, will listen (example: `:8080`). The default is empty string, which means the server is disabled. Only one of `--metrics-address` and `--http-endpoint` can be set.")
+	metricsPath                 = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed. Default is `/metrics`.")
+	retryIntervalStart          = flag.Duration("retry-interval-start", time.Second, "Initial retry interval of failed volume snapshot creation or deletion. It doubles with each failure, up to retry-interval-max. Default is 1 second.")
+	retryIntervalMax            = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval of failed volume snapshot creation or deletion. Default is 5 minutes.")
+	enableNodeDeployment        = flag.Bool("node-deployment", false, "Enables deploying the sidecar controller together with a CSI driver on nodes to manage snapshots for node-local volumes.")
 	groupSnapshotNamePrefix     = flag.String("groupsnapshot-name-prefix", "groupsnapshot", "Prefix to apply to the name of a created group snapshot")
 	groupSnapshotNameUUIDLength = flag.Int("groupsnapshot-name-uuid-length", -1, "Length in characters for the generated uuid of a created group snapshot. Defaults behavior is to NOT truncate.")
+	featureGates                map[string]bool
 )
 
 var (
@@ -97,9 +100,16 @@ var (
 )
 
 func main() {
+	flag.Var(utilflag.NewMapStringBool(&featureGates), "feature-gates", "Comma-seprated list of key=value pairs that describe feature gates for alpha/experimental features. "+
+		"Options are:\n"+strings.Join(utilfeature.DefaultFeatureGate.KnownFeatures(), "\n"))
+
 	klog.InitFlags(nil)
 	flag.Set("logtostderr", "true")
 	flag.Parse()
+
+	if err := utilfeature.DefaultMutableFeatureGate.SetFromMap(featureGates); err != nil {
+		klog.Fatal("Error while parsing feature gates: ", err)
+	}
 
 	if *showVersion {
 		fmt.Println(os.Args[0], version)
@@ -123,7 +133,9 @@ func main() {
 	config.QPS = (float32)(*kubeAPIQPS)
 	config.Burst = *kubeAPIBurst
 
-	kubeClient, err := kubernetes.NewForConfig(config)
+	coreConfig := rest.CopyConfig(config)
+	coreConfig.ContentType = runtime.ContentTypeProtobuf
+	kubeClient, err := kubernetes.NewForConfig(coreConfig)
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
@@ -231,14 +243,14 @@ func main() {
 
 	snapShotter := snapshotter.NewSnapshotter(csiConn)
 	var groupSnapshotter group_snapshotter.GroupSnapshotter
-	if *enableVolumeGroupSnapshots {
+	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeGroupSnapshot) {
 		tctx, cancel = context.WithTimeout(ctx, *csiTimeout)
 		defer cancel()
 		supportsCreateVolumeGroupSnapshot, err := supportsGroupControllerCreateVolumeGroupSnapshot(tctx, csiConn)
 		if err != nil {
 			klog.Errorf("error determining if driver supports create/delete group snapshot operations: %v", err)
 		} else if !supportsCreateVolumeGroupSnapshot {
-			klog.Warningf("CSI driver %s does not support GroupControllerCreateVolumeGroupSnapshot when the --enable-volume-group-snapshots flag is true", driverName)
+			klog.Warningf("CSI driver %s does not support GroupControllerCreateVolumeGroupSnapshot when the --feature-gates=CSIVolumeGroupSnapshot=true flag is set", driverName)
 		}
 		groupSnapshotter = group_snapshotter.NewGroupSnapshotter(csiConn)
 		if len(*groupSnapshotNamePrefix) == 0 {
@@ -262,11 +274,11 @@ func main() {
 		*groupSnapshotNamePrefix,
 		*groupSnapshotNameUUIDLength,
 		*extraCreateMetadata,
-		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
-		*enableVolumeGroupSnapshots,
-		snapshotContentfactory.Groupsnapshot().V1alpha1().VolumeGroupSnapshotContents(),
-		snapshotContentfactory.Groupsnapshot().V1alpha1().VolumeGroupSnapshotClasses(),
-		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
+		workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
+		utilfeature.DefaultFeatureGate.Enabled(features.VolumeGroupSnapshot),
+		snapshotContentfactory.Groupsnapshot().V1beta1().VolumeGroupSnapshotContents(),
+		snapshotContentfactory.Groupsnapshot().V1beta1().VolumeGroupSnapshotClasses(),
+		workqueue.NewTypedItemExponentialFailureRateLimiter[string](*retryIntervalStart, *retryIntervalMax),
 	)
 
 	run := func(context.Context) {
