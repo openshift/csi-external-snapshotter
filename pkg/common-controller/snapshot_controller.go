@@ -92,7 +92,6 @@ func (ctrl *csiSnapshotCommonController) syncContent(content *crdv1.VolumeSnapsh
 
 	klog.V(5).Infof("syncContent[%s]: check if we should add invalid label on content", content.Name)
 
-	// Keep this check in the controller since the validation webhook may not have been deployed.
 	if (content.Spec.Source.VolumeHandle == nil && content.Spec.Source.SnapshotHandle == nil) ||
 		(content.Spec.Source.VolumeHandle != nil && content.Spec.Source.SnapshotHandle != nil) {
 		err := fmt.Errorf("Exactly one of VolumeHandle and SnapshotHandle should be specified")
@@ -174,7 +173,7 @@ func (ctrl *csiSnapshotCommonController) syncContent(content *crdv1.VolumeSnapsh
 // created, updated or periodically synced. We do not differentiate between
 // these events.
 // For easier readability, it is split into syncUnreadySnapshot and syncReadySnapshot
-func (ctrl *csiSnapshotCommonController) syncSnapshot(snapshot *crdv1.VolumeSnapshot) error {
+func (ctrl *csiSnapshotCommonController) syncSnapshot(ctx context.Context, snapshot *crdv1.VolumeSnapshot) error {
 	klog.V(5).Infof("synchronizing VolumeSnapshot[%s]: %s", utils.SnapshotKey(snapshot), utils.GetSnapshotStatusForLogging(snapshot))
 
 	klog.V(5).Infof("syncSnapshot [%s]: check if we should remove finalizer on snapshot PVC source and remove it if we can", utils.SnapshotKey(snapshot))
@@ -193,7 +192,6 @@ func (ctrl *csiSnapshotCommonController) syncSnapshot(snapshot *crdv1.VolumeSnap
 		return ctrl.processSnapshotWithDeletionTimestamp(snapshot)
 	}
 
-	// Keep this check in the controller since the validation webhook may not have been deployed.
 	klog.V(5).Infof("syncSnapshot[%s]: validate snapshot to make sure source has been correctly specified", utils.SnapshotKey(snapshot))
 	if (snapshot.Spec.Source.PersistentVolumeClaimName == nil && snapshot.Spec.Source.VolumeSnapshotContentName == nil) ||
 		(snapshot.Spec.Source.PersistentVolumeClaimName != nil && snapshot.Spec.Source.VolumeSnapshotContentName != nil) {
@@ -216,7 +214,7 @@ func (ctrl *csiSnapshotCommonController) syncSnapshot(snapshot *crdv1.VolumeSnap
 	if !utils.IsSnapshotReady(snapshot) || !utils.IsBoundVolumeSnapshotContentNameSet(snapshot) {
 		return ctrl.syncUnreadySnapshot(snapshot)
 	}
-	return ctrl.syncReadySnapshot(snapshot)
+	return ctrl.syncReadySnapshot(ctx, snapshot)
 }
 
 // processSnapshotWithDeletionTimestamp processes finalizers and deletes the content when appropriate. It has the following steps:
@@ -397,7 +395,7 @@ func (ctrl *csiSnapshotCommonController) checkandAddSnapshotFinalizers(snapshot 
 
 // syncReadySnapshot checks the snapshot which has been bound to snapshot content successfully before.
 // If there is any problem with the binding (e.g., snapshot points to a non-existent snapshot content), update the snapshot status and emit event.
-func (ctrl *csiSnapshotCommonController) syncReadySnapshot(snapshot *crdv1.VolumeSnapshot) error {
+func (ctrl *csiSnapshotCommonController) syncReadySnapshot(ctx context.Context, snapshot *crdv1.VolumeSnapshot) error {
 	if !utils.IsBoundVolumeSnapshotContentNameSet(snapshot) {
 		return fmt.Errorf("snapshot %s is not bound to a content", utils.SnapshotKey(snapshot))
 	}
@@ -417,8 +415,54 @@ func (ctrl *csiSnapshotCommonController) syncReadySnapshot(snapshot *crdv1.Volum
 		return ctrl.updateSnapshotErrorStatusWithEvent(snapshot, true, v1.EventTypeWarning, "SnapshotMisbound", "VolumeSnapshotContent is not bound to the VolumeSnapshot correctly")
 	}
 
+	// If this snapshot is a member of a volume group snapshot, ensure we have
+	// the correct ownership. This happens when the user
+	// statically provisioned volume group snapshot members.
+	if utils.NeedToAddVolumeGroupSnapshotOwnership(snapshot) {
+		if _, err := ctrl.addVolumeGroupSnapshotOwnership(ctx, snapshot); err != nil {
+			return err
+		}
+	}
+
 	// everything is verified, return
 	return nil
+}
+
+// addVolumeGroupSnapshotOwnership adds the ownership information to a statically provisioned VolumeSnapshot
+// that is a member of a volume group snapshot
+func (ctrl *csiSnapshotCommonController) addVolumeGroupSnapshotOwnership(ctx context.Context, snapshot *crdv1.VolumeSnapshot) (*crdv1.VolumeSnapshot, error) {
+	klog.V(4).Infof("addVolumeGroupSnapshotOwnership[%s]: adding ownership information", utils.SnapshotKey(snapshot))
+	if snapshot.Status == nil || snapshot.Status.VolumeGroupSnapshotName == nil {
+		klog.V(4).Infof("addVolumeGroupSnapshotOwnership[%s]: no need to add ownership information, empty volumeGroupSnapshotName", utils.SnapshotKey(snapshot))
+		return nil, nil
+	}
+	parentObjectName := *snapshot.Status.VolumeGroupSnapshotName
+
+	parentGroup, err := ctrl.groupSnapshotLister.VolumeGroupSnapshots(snapshot.Namespace).Get(parentObjectName)
+	if err != nil {
+		klog.V(4).Infof("addVolumeGroupSnapshotOwnership[%s]: error while looking for parent group %v", utils.SnapshotKey(snapshot), err)
+		return nil, err
+	}
+	if parentGroup == nil {
+		klog.V(4).Infof("addVolumeGroupSnapshotOwnership[%s]: parent group not found %v", utils.SnapshotKey(snapshot), err)
+		return nil, fmt.Errorf("missing parent group for snapshot %v", utils.SnapshotKey(snapshot))
+	}
+
+	updatedSnapshot := snapshot.DeepCopy()
+	updatedSnapshot.ObjectMeta.OwnerReferences = append(
+		snapshot.ObjectMeta.OwnerReferences,
+		utils.BuildVolumeGroupSnapshotOwnerReference(parentGroup),
+	)
+
+	newSnapshot, err := ctrl.clientset.SnapshotV1().VolumeSnapshots(snapshot.Namespace).Update(ctx, updatedSnapshot, metav1.UpdateOptions{})
+	if err != nil {
+		klog.V(4).Infof("addVolumeGroupSnapshotOwnership[%s]: error when updating VolumeSnapshot %v", utils.SnapshotKey(snapshot), err)
+		return nil, err
+	}
+
+	klog.V(4).Infof("addVolumeGroupSnapshotOwnership[%s]: updated ownership", utils.SnapshotKey(snapshot))
+
+	return newSnapshot, nil
 }
 
 // syncUnreadySnapshot is the main controller method to decide what to do with a snapshot which is not set to ready.
@@ -477,6 +521,40 @@ func (ctrl *csiSnapshotCommonController) syncUnreadySnapshot(snapshot *crdv1.Vol
 		if _, err = ctrl.updateSnapshotStatus(snapshot, newContent); err != nil {
 			// update snapshot status failed
 			klog.V(4).Infof("failed to update snapshot %s status: %v", utils.SnapshotKey(snapshot), err)
+			ctrl.updateSnapshotErrorStatusWithEvent(snapshot, false, v1.EventTypeWarning, "SnapshotStatusUpdateFailed", fmt.Sprintf("Snapshot status update failed, %v", err))
+			return err
+		}
+
+		return nil
+	}
+
+	// member of a dynamically provisioned volume group snapshot
+	if utils.IsVolumeGroupSnapshotMember(snapshot) {
+		if snapshot.Status == nil || snapshot.Status.BoundVolumeSnapshotContentName == nil {
+			klog.V(5).Infof(
+				"syncUnreadySnapshot [%s]: detected group snapshot member with no content, retrying",
+				utils.SnapshotKey(snapshot))
+			return fmt.Errorf("detected group snapshot member %s with no content, retrying",
+				utils.SnapshotKey(snapshot))
+		}
+
+		volumeSnapshotContentName := *snapshot.Status.BoundVolumeSnapshotContentName
+
+		content, err := ctrl.getContentFromStore(volumeSnapshotContentName)
+		if err != nil {
+			return err
+		}
+		if content == nil {
+			// can not find the desired VolumeSnapshotContent from cache store
+			// we'll retry
+			return fmt.Errorf("group snapshot member %s requests an non-existing content %s", utils.SnapshotKey(snapshot), volumeSnapshotContentName)
+		}
+
+		// update snapshot status
+		klog.V(5).Infof("syncUnreadySnapshot [%s]: trying to update group snapshot member status", utils.SnapshotKey(snapshot))
+		if _, err = ctrl.updateSnapshotStatus(snapshot, content); err != nil {
+			// update snapshot status failed
+			klog.V(4).Infof("failed to update group snapshot member %s status: %v", utils.SnapshotKey(snapshot), err)
 			ctrl.updateSnapshotErrorStatusWithEvent(snapshot, false, v1.EventTypeWarning, "SnapshotStatusUpdateFailed", fmt.Sprintf("Snapshot status update failed, %v", err))
 			return err
 		}
@@ -1387,6 +1465,12 @@ func (ctrl *csiSnapshotCommonController) SetDefaultSnapshotClass(snapshot *crdv1
 	if snapshot.Spec.Source.VolumeSnapshotContentName != nil {
 		// don't return error for pre-provisioned snapshots
 		klog.V(5).Infof("Don't need to find SnapshotClass for pre-provisioned snapshot [%s]", snapshot.Name)
+		return nil, snapshot, nil
+	}
+
+	if utils.IsVolumeGroupSnapshotMember(snapshot) {
+		// don't return error for volume group snapshot members
+		klog.V(5).Infof("Don't need to find SnapshotClass for volume group snapshot member [%s]", snapshot.Name)
 		return nil, snapshot, nil
 	}
 
