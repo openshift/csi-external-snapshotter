@@ -575,11 +575,11 @@ func newTestController(kubeClient kubernetes.Interface, clientset clientset.Inte
 		"groupsnapshot",
 		-1,
 		true,
-		workqueue.NewItemExponentialFailureRateLimiter(1*time.Millisecond, 1*time.Minute),
+		workqueue.NewTypedItemExponentialFailureRateLimiter[string](1*time.Millisecond, 1*time.Minute),
 		false,
-		informerFactory.Groupsnapshot().V1alpha1().VolumeGroupSnapshotContents(),
-		informerFactory.Groupsnapshot().V1alpha1().VolumeGroupSnapshotClasses(),
-		workqueue.NewItemExponentialFailureRateLimiter(1*time.Millisecond, 1*time.Minute),
+		informerFactory.Groupsnapshot().V1beta1().VolumeGroupSnapshotContents(),
+		informerFactory.Groupsnapshot().V1beta1().VolumeGroupSnapshotClasses(),
+		workqueue.NewTypedItemExponentialFailureRateLimiter[string](1*time.Millisecond, 1*time.Minute),
 	)
 
 	ctrl.eventRecorder = record.NewFakeRecorder(1000)
@@ -665,6 +665,15 @@ func newContentArrayWithReadyToUse(contentName, boundToSnapshotUID, boundToSnaps
 	return []*crdv1.VolumeSnapshotContent{
 		content,
 	}
+}
+
+func newContentWithVolumeGroupSnapshotHandle(contentName, boundToSnapshotUID, boundToSnapshotName, snapshotHandle, volumeGroupSnapshotHandle, snapshotClassName, desiredSnapshotHandle,
+	volumeHandle string, deletionPolicy crdv1.DeletionPolicy, creationTime, size *int64, withFinalizer bool, deletionTime *metav1.Time) []*crdv1.VolumeSnapshotContent {
+	content := newContentArrayWithDeletionTimestamp(contentName, boundToSnapshotUID, boundToSnapshotName, snapshotHandle, snapshotClassName, desiredSnapshotHandle, volumeHandle, deletionPolicy, creationTime, size, withFinalizer, deletionTime)
+	for _, c := range content {
+		c.Status.VolumeGroupSnapshotHandle = &volumeGroupSnapshotHandle
+	}
+	return content
 }
 
 func newContentArrayWithDeletionTimestamp(contentName, boundToSnapshotUID, boundToSnapshotName, snapshotHandle, snapshotClassName, desiredSnapshotHandle, volumeHandle string,
