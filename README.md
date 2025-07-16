@@ -67,20 +67,20 @@ Therefore, it is strongly recommended that Kubernetes distributors bundle and de
 If your Kubernetes distribution does not bundle the snapshot controller, you may manually install these components by executing the following steps. Note that the snapshot controller YAML files in the git repository deploy into the default namespace for system testing purposes. For general use, update the snapshot controller YAMLs with an appropriate namespace prior to installing. For example, on a Vanilla Kubernetes cluster update the namespace from 'default' to 'kube-system' prior to issuing the kubectl create command.
 
 Install Snapshot and Volume Group Snapshot CRDs:
-* kubectl kustomize client/config/crd | kubectl create -f -
-* https://github.com/kubernetes-csi/external-snapshotter/tree/master/client/config/crd
+* With the repo cloned locally: `kubectl kustomize client/config/crd | kubectl create -f -`
+* From the repo remotely: `kubectl kustomize https://github.com/kubernetes-csi/external-snapshotter/client/config/crd | kubectl create -f -`
 * Do this once per cluster
 
 Install Common Snapshot Controller:
 * Update the namespace to an appropriate value for your environment (e.g. kube-system)
-* kubectl -n kube-system kustomize deploy/kubernetes/snapshot-controller | kubectl create -f -
+* `kubectl -n kube-system kustomize deploy/kubernetes/snapshot-controller | kubectl create -f -`
 * Do this once per cluster
 
 Install CSI Driver:
 * Follow instructions provided by your CSI Driver vendor.
 * Here is an example to install the sample hostpath CSI driver
-  * kubectl kustomize deploy/kubernetes/csi-snapshotter | kubectl create -f -
-  * https://github.com/kubernetes-csi/external-snapshotter/tree/master/deploy/kubernetes/csi-snapshotter
+  * With the repo cloned locally: `kubectl kustomize deploy/kubernetes/csi-snapshotter | kubectl create -f -`
+  * From the repo remotely: `kubectl kustomize https://github.com/kubernetes-csi/external-snapshotter/deploy/kubernetes/csi-snapshotter | kubectl create -f -`
 
 ##### Volume Snapshot
 
@@ -166,6 +166,8 @@ Specifically, `deploy/kubernetes/snapshot-controller/setup-snapshot-controller.y
 
 * `--resync-period <duration>`: Internal resync interval when the snapshot controller re-evaluates all existing `VolumeSnapshot` instances and tries to fulfill them, i.e. create / delete corresponding snapshots. It does not affect re-tries of failed calls! It should be used only when there is a bug in Kubernetes watch logic. Default is 15 minutes.
 
+* `--automaxprocs`: Automatically set the `GOMAXPROCS` environment variable to match the configured Linux container CPU quota. Defaults to false.
+
 * `--version`: Prints current snapshot controller version and quits.
 
 * All glog / klog arguments are supported, such as `-v <log level>` or `-alsologtostderr`.
@@ -211,6 +213,8 @@ Specifically, `deploy/kubernetes/snapshot-controller/setup-snapshot-controller.y
 * `--kubeconfig <path>`: Path to Kubernetes client configuration that the CSI external-snapshotter uses to connect to Kubernetes API server. When omitted, default token provided by Kubernetes will be used. This option is useful only when the external-snapshotter does not run as a Kubernetes pod, e.g. for debugging.
 
 * `--resync-period <duration>`: Internal resync interval when the CSI external-snapshotter re-evaluates all existing `VolumeSnapshotContent` instances and tries to fulfill them, i.e. update / delete corresponding snapshots. It does not affect re-tries of failed CSI calls! It should be used only when there is a bug in Kubernetes watch logic. Default is 15 minutes.
+
+* `--automaxprocs`: Automatically set the `GOMAXPROCS` environment variable to match the configured Linux container CPU quota. Defaults to false.
 
 * `--version`: Prints current CSI external-snapshotter version and quits.
 

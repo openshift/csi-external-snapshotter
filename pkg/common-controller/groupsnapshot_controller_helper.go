@@ -19,11 +19,11 @@ package common_controller
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -249,7 +249,7 @@ func (ctrl *csiSnapshotCommonController) updateGroupSnapshot(ctx context.Context
 
 	err = ctrl.syncGroupSnapshot(ctx, groupSnapshot)
 	if err != nil {
-		if errors.IsConflict(err) {
+		if apierrs.IsConflict(err) {
 			// Version conflict error happens quite often and the controller
 			// recovers from it easily.
 			klog.V(3).Infof("could not sync group snapshot %q: %+v", utils.GroupSnapshotKey(groupSnapshot), err)
@@ -554,10 +554,10 @@ func (ctrl *csiSnapshotCommonController) createSnapshotsForGroupSnapshotContent(
 		}
 
 		volumeSnapshotContentName := getSnapshotContentNameForVolumeGroupSnapshotContent(
-			string(groupSnapshotContent.UID), volumeHandle)
+			string(groupSnapshot.UID), volumeHandle)
 
 		volumeSnapshotName := getSnapshotNameForVolumeGroupSnapshotContent(
-			string(groupSnapshotContent.UID), volumeHandle)
+			string(groupSnapshot.UID), volumeHandle)
 
 		volumeSnapshotNamespace := groupSnapshotContent.Spec.VolumeGroupSnapshotRef.Namespace
 
@@ -727,14 +727,14 @@ func (ctrl *csiSnapshotCommonController) findPersistentVolumeByCSIDriverHandle(d
 }
 
 // getSnapshotNameForVolumeGroupSnapshotContent returns a unique snapshot name for a VolumeGroupSnapshotContent.
-func getSnapshotNameForVolumeGroupSnapshotContent(groupSnapshotContentUUID, volumeHandle string) string {
-	return fmt.Sprintf("snapshot-%x", sha256.Sum256([]byte(groupSnapshotContentUUID+volumeHandle)))
+func getSnapshotNameForVolumeGroupSnapshotContent(groupSnapshotUUID, volumeHandle string) string {
+	return fmt.Sprintf("snapshot-%x", sha256.Sum256([]byte(groupSnapshotUUID+volumeHandle)))
 }
 
 // getSnapshotContentNameForVolumeGroupSnapshotContent returns a unique content name for the
 // passed in VolumeGroupSnapshotContent.
-func getSnapshotContentNameForVolumeGroupSnapshotContent(groupSnapshotContentUUID, volumeHandle string) string {
-	return fmt.Sprintf("snapcontent-%x", sha256.Sum256([]byte(groupSnapshotContentUUID+volumeHandle)))
+func getSnapshotContentNameForVolumeGroupSnapshotContent(groupSnapshotUUID, volumeHandle string) string {
+	return fmt.Sprintf("snapcontent-%x", sha256.Sum256([]byte(groupSnapshotUUID+volumeHandle)))
 }
 
 // getPreprovisionedGroupSnapshotContentFromStore tries to find a pre-provisioned
@@ -776,7 +776,7 @@ func (ctrl *csiSnapshotCommonController) getPreprovisionedGroupSnapshotContentFr
 		klog.V(4).Infof("sync group snapshot[%s]: VolumeGroupSnapshotContent %s is bound to another group snapshot %v", utils.GroupSnapshotKey(groupSnapshot), contentName, ref)
 		msg := fmt.Sprintf("VolumeGroupSnapshotContent [%s] is bound to a different group snapshot", contentName)
 		ctrl.updateGroupSnapshotErrorStatusWithEvent(groupSnapshot, true, v1.EventTypeWarning, "GroupSnapshotContentMisbound", msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 	return groupSnapshotContent, nil
 }
@@ -968,7 +968,7 @@ func (ctrl *csiSnapshotCommonController) getDynamicallyProvisionedGroupContentFr
 		klog.V(4).Infof("sync group snapshot[%s]: VolumeGroupSnapshotContent %s is bound to another group snapshot %v", utils.GroupSnapshotKey(groupSnapshot), contentName, ref)
 		msg := fmt.Sprintf("VolumeGroupSnapshotContent [%s] is bound to a different group snapshot", contentName)
 		ctrl.updateGroupSnapshotErrorStatusWithEvent(groupSnapshot, true, v1.EventTypeWarning, "GroupSnapshotContentMisbound", msg)
-		return nil, fmt.Errorf(msg)
+		return nil, errors.New(msg)
 	}
 	return groupSnapshotContent, nil
 }
@@ -1513,7 +1513,7 @@ func (ctrl *csiSnapshotCommonController) processGroupSnapshotWithDeletionTimesta
 				utils.GroupSnapshotKey(groupSnapshot), err)
 			klog.Error(msg)
 			ctrl.eventRecorder.Event(groupSnapshot, v1.EventTypeWarning, "SnapshotDeleteError", msg)
-			return fmt.Errorf(msg)
+			return errors.New(msg)
 		}
 	}
 
