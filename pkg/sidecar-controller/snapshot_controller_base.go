@@ -18,14 +18,17 @@ package sidecar_controller
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/features"
 	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/group_snapshotter"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -34,12 +37,12 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	klog "k8s.io/klog/v2"
 
-	crdv1beta1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumegroupsnapshot/v1beta1"
+	crdv1beta2 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumegroupsnapshot/v1beta2"
 	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	clientset "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned"
-	groupsnapshotinformers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions/volumegroupsnapshot/v1beta1"
+	groupsnapshotinformers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions/volumegroupsnapshot/v1beta2"
 	snapshotinformers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions/volumesnapshot/v1"
-	groupsnapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumegroupsnapshot/v1beta1"
+	groupsnapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumegroupsnapshot/v1beta2"
 	snapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumesnapshot/v1"
 	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/snapshotter"
 	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/utils"
@@ -167,7 +170,7 @@ func NewCSISnapshotSideCarController(
 	return ctrl
 }
 
-func (ctrl *csiSnapshotSideCarController) Run(workers int, stopCh <-chan struct{}) {
+func (ctrl *csiSnapshotSideCarController) Run(workers int, stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	defer ctrl.contentQueue.ShutDown()
 
 	klog.Infof("Starting CSI snapshotter")
@@ -185,10 +188,27 @@ func (ctrl *csiSnapshotSideCarController) Run(workers int, stopCh <-chan struct{
 
 	ctrl.initializeCaches()
 
-	for i := 0; i < workers; i++ {
-		go wait.Until(ctrl.contentWorker, 0, stopCh)
-		if ctrl.enableVolumeGroupSnapshots {
-			go wait.Until(ctrl.groupSnapshotContentWorker, 0, stopCh)
+	if utilfeature.DefaultFeatureGate.Enabled(features.ReleaseLeaderElectionOnExit) {
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				wait.Until(ctrl.contentWorker, 0, stopCh)
+			}()
+			if ctrl.enableVolumeGroupSnapshots {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					wait.Until(ctrl.groupSnapshotContentWorker, 0, stopCh)
+				}()
+			}
+		}
+	} else {
+		for i := 0; i < workers; i++ {
+			go wait.Until(ctrl.contentWorker, 0, stopCh)
+			if ctrl.enableVolumeGroupSnapshots {
+				go wait.Until(ctrl.groupSnapshotContentWorker, 0, stopCh)
+			}
 		}
 	}
 
@@ -333,7 +353,7 @@ func (ctrl *csiSnapshotSideCarController) isDriverMatch(object interface{}) bool
 		}
 		return true
 	}
-	if content, ok := object.(*crdv1beta1.VolumeGroupSnapshotContent); ok {
+	if content, ok := object.(*crdv1beta2.VolumeGroupSnapshotContent); ok {
 		if content.Spec.Source.GroupSnapshotHandles == nil && len(content.Spec.Source.VolumeHandles) == 0 {
 			// Skip this group snapshot content if it does not have a valid source
 			return false

@@ -19,15 +19,17 @@ package common_controller
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
-	crdv1beta1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumegroupsnapshot/v1beta1"
+	crdv1beta2 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumegroupsnapshot/v1beta2"
 	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	clientset "github.com/kubernetes-csi/external-snapshotter/client/v8/clientset/versioned"
-	groupsnapshotinformers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions/volumegroupsnapshot/v1beta1"
+	groupsnapshotinformers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions/volumegroupsnapshot/v1beta2"
 	snapshotinformers "github.com/kubernetes-csi/external-snapshotter/client/v8/informers/externalversions/volumesnapshot/v1"
-	groupsnapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumegroupsnapshot/v1beta1"
+	groupsnapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumegroupsnapshot/v1beta2"
 	snapshotlisters "github.com/kubernetes-csi/external-snapshotter/client/v8/listers/volumesnapshot/v1"
+	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/features"
 	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/metrics"
 	"github.com/kubernetes-csi/external-snapshotter/v8/pkg/utils"
 
@@ -35,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -244,7 +247,7 @@ func NewCSISnapshotCommonController(
 	return ctrl
 }
 
-func (ctrl *csiSnapshotCommonController) Run(workers int, stopCh <-chan struct{}) {
+func (ctrl *csiSnapshotCommonController) Run(workers int, stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	defer ctrl.snapshotQueue.ShutDown()
 	defer ctrl.contentQueue.ShutDown()
 	if ctrl.enableVolumeGroupSnapshots {
@@ -276,12 +279,40 @@ func (ctrl *csiSnapshotCommonController) Run(workers int, stopCh <-chan struct{}
 
 	ctrl.initializeCaches()
 
-	for i := 0; i < workers; i++ {
-		go wait.Until(ctrl.snapshotWorker, 0, stopCh)
-		go wait.Until(ctrl.contentWorker, 0, stopCh)
-		if ctrl.enableVolumeGroupSnapshots {
-			go wait.Until(ctrl.groupSnapshotWorker, 0, stopCh)
-			go wait.Until(ctrl.groupSnapshotContentWorker, 0, stopCh)
+	if utilfeature.DefaultFeatureGate.Enabled(features.ReleaseLeaderElectionOnExit) {
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				wait.Until(ctrl.snapshotWorker, 0, stopCh)
+			}()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				wait.Until(ctrl.contentWorker, 0, stopCh)
+			}()
+
+			if ctrl.enableVolumeGroupSnapshots {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					wait.Until(ctrl.groupSnapshotWorker, 0, stopCh)
+				}()
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					wait.Until(ctrl.groupSnapshotContentWorker, 0, stopCh)
+				}()
+			}
+		}
+	} else {
+		for i := 0; i < workers; i++ {
+			go wait.Until(ctrl.snapshotWorker, 0, stopCh)
+			go wait.Until(ctrl.contentWorker, 0, stopCh)
+			if ctrl.enableVolumeGroupSnapshots {
+				go wait.Until(ctrl.groupSnapshotWorker, 0, stopCh)
+				go wait.Until(ctrl.groupSnapshotContentWorker, 0, stopCh)
+			}
 		}
 	}
 
@@ -658,7 +689,7 @@ func (ctrl *csiSnapshotCommonController) enqueueGroupSnapshotWork(obj interface{
 	if unknown, ok := obj.(cache.DeletedFinalStateUnknown); ok && unknown.Obj != nil {
 		obj = unknown.Obj
 	}
-	if groupSnapshot, ok := obj.(*crdv1beta1.VolumeGroupSnapshot); ok {
+	if groupSnapshot, ok := obj.(*crdv1beta2.VolumeGroupSnapshot); ok {
 		objName, err := cache.DeletionHandlingMetaNamespaceKeyFunc(groupSnapshot)
 		if err != nil {
 			klog.Errorf("failed to get key from object: %v, %v", err, groupSnapshot)
@@ -675,7 +706,7 @@ func (ctrl *csiSnapshotCommonController) enqueueGroupSnapshotContentWork(obj int
 	if unknown, ok := obj.(cache.DeletedFinalStateUnknown); ok && unknown.Obj != nil {
 		obj = unknown.Obj
 	}
-	if content, ok := obj.(*crdv1beta1.VolumeGroupSnapshotContent); ok {
+	if content, ok := obj.(*crdv1beta2.VolumeGroupSnapshotContent); ok {
 		objName, err := cache.DeletionHandlingMetaNamespaceKeyFunc(content)
 		if err != nil {
 			klog.Errorf("failed to get key from object: %v, %v", err, content)
@@ -769,7 +800,7 @@ func (ctrl *csiSnapshotCommonController) syncGroupSnapshotByKey(ctx context.Cont
 		klog.V(2).Infof("deletion of group snapshot %q was already processed", key)
 		return nil
 	}
-	groupSnapshot, ok := vgsObj.(*crdv1beta1.VolumeGroupSnapshot)
+	groupSnapshot, ok := vgsObj.(*crdv1beta2.VolumeGroupSnapshot)
 	if !ok {
 		klog.Errorf("expected vgs, got %+v", vgsObj)
 		return nil
@@ -785,9 +816,9 @@ func (ctrl *csiSnapshotCommonController) syncGroupSnapshotByKey(ctx context.Cont
 // If it is not set, gets it from default VolumeGroupSnapshotClass and sets it.
 // On error, it must return the original group snapshot, not nil, because the caller
 // syncGroupSnapshotByKey needs to check group snapshot's timestamp.
-func (ctrl *csiSnapshotCommonController) checkAndUpdateGroupSnapshotClass(groupSnapshot *crdv1beta1.VolumeGroupSnapshot) (*crdv1beta1.VolumeGroupSnapshot, error) {
+func (ctrl *csiSnapshotCommonController) checkAndUpdateGroupSnapshotClass(groupSnapshot *crdv1beta2.VolumeGroupSnapshot) (*crdv1beta2.VolumeGroupSnapshot, error) {
 	className := groupSnapshot.Spec.VolumeGroupSnapshotClassName
-	var class *crdv1beta1.VolumeGroupSnapshotClass
+	var class *crdv1beta2.VolumeGroupSnapshotClass
 	var err error
 	newGroupSnapshot := groupSnapshot
 	if className != nil {
@@ -849,7 +880,7 @@ func (ctrl *csiSnapshotCommonController) syncGroupSnapshotContentByKey(key strin
 		klog.V(2).Infof("deletion of group snapshot content %q was already processed", key)
 		return nil
 	}
-	content, ok := contentObj.(*crdv1beta1.VolumeGroupSnapshotContent)
+	content, ok := contentObj.(*crdv1beta2.VolumeGroupSnapshotContent)
 	if !ok {
 		klog.Errorf("expected group snapshot content, got %+v", content)
 		return nil
@@ -860,7 +891,7 @@ func (ctrl *csiSnapshotCommonController) syncGroupSnapshotContentByKey(key strin
 
 // updateGroupSnapshotContent runs in worker thread and handles "groupsnapshotcontent added",
 // "groupsnapshotcontent updated" and "periodic sync" events.
-func (ctrl *csiSnapshotCommonController) updateGroupSnapshotContent(content *crdv1beta1.VolumeGroupSnapshotContent) error {
+func (ctrl *csiSnapshotCommonController) updateGroupSnapshotContent(content *crdv1beta2.VolumeGroupSnapshotContent) error {
 	// Store the new group snapshot content version in the cache and do not process
 	// it if this is an old version.
 	new, err := ctrl.storeGroupSnapshotContentUpdate(content)
@@ -885,7 +916,7 @@ func (ctrl *csiSnapshotCommonController) updateGroupSnapshotContent(content *crd
 }
 
 // deleteGroupSnapshotContent runs in worker thread and handles "groupsnapshotcontent deleted" event.
-func (ctrl *csiSnapshotCommonController) deleteGroupSnapshotContent(content *crdv1beta1.VolumeGroupSnapshotContent) {
+func (ctrl *csiSnapshotCommonController) deleteGroupSnapshotContent(content *crdv1beta2.VolumeGroupSnapshotContent) {
 	_ = ctrl.groupSnapshotContentStore.Delete(content)
 	klog.V(4).Infof("group snapshot content %q deleted", content.Name)
 
