@@ -618,10 +618,15 @@ func (ctrl *csiSnapshotCommonController) createSnapshotsForGroupSnapshotContent(
 			volumeSnapshot.Spec.Source.PersistentVolumeClaimName = &emptyString
 		}
 
-		_, err = ctrl.clientset.SnapshotV1().VolumeSnapshotContents().Create(ctx, volumeSnapshotContent, metav1.CreateOptions{})
-		if err != nil && !apierrs.IsAlreadyExists(err) {
+		createdVolumeSnapshotContent, err := ctrl.clientset.SnapshotV1().VolumeSnapshotContents().Create(ctx, volumeSnapshotContent, metav1.CreateOptions{})
+		if apierrs.IsAlreadyExists(err) {
+			createdVolumeSnapshotContent, err = ctrl.clientset.SnapshotV1().
+				VolumeSnapshotContents().
+				Get(ctx, volumeSnapshotContent.Name, metav1.GetOptions{})
+		}
+		if err != nil {
 			return groupSnapshotContent, fmt.Errorf(
-				"createSnapshotsForGroupSnapshotContent: creating volumesnapshotcontent %w", err)
+				"createSnapshotsForGroupSnapshotContent: error creating or fetching volumesnapshotcontent %w", err)
 		}
 
 		createdVolumeSnapshot, err := ctrl.clientset.SnapshotV1().VolumeSnapshots(volumeSnapshotNamespace).Create(ctx, volumeSnapshot, metav1.CreateOptions{})
@@ -643,12 +648,12 @@ func (ctrl *csiSnapshotCommonController) createSnapshotsForGroupSnapshotContent(
 
 		// bind the volume snapshot content to the volume snapshot
 		// like a dynamically provisioned snapshot would do
-		volumeSnapshotContent.Spec.VolumeSnapshotRef.UID = createdVolumeSnapshot.UID
-		_, err = utils.PatchVolumeSnapshotContent(volumeSnapshotContent, []utils.PatchOp{
+		createdVolumeSnapshotContent.Spec.VolumeSnapshotRef.UID = createdVolumeSnapshot.UID
+		_, err = utils.PatchVolumeSnapshotContent(createdVolumeSnapshotContent, []utils.PatchOp{
 			{
 				Op:    "replace",
 				Path:  "/spec/volumeSnapshotRef/uid",
-				Value: volumeSnapshotContent.Spec.VolumeSnapshotRef.UID,
+				Value: createdVolumeSnapshotContent.Spec.VolumeSnapshotRef.UID,
 			},
 		}, ctrl.clientset)
 		if err != nil {
@@ -678,7 +683,7 @@ func (ctrl *csiSnapshotCommonController) createSnapshotsForGroupSnapshotContent(
 		// set the snapshot handle and the group snapshot handle
 		// inside the volume snapshot content to allow
 		// the CSI Snapshotter sidecar to reconcile its status
-		_, err = utils.PatchVolumeSnapshotContent(volumeSnapshotContent, []utils.PatchOp{
+		_, err = utils.PatchVolumeSnapshotContent(createdVolumeSnapshotContent, []utils.PatchOp{
 			{
 				Op:    "replace",
 				Path:  "/status",
