@@ -167,6 +167,9 @@ func main() {
 	logs.InitLogs()
 	standardflags.AddAutomaxprocs(klog.Infof)
 	flag.Parse()
+	// Force log level to 5 for debugging
+	flag.Set("v", "5")
+
 	if err := logsapi.ValidateAndApply(c, fg); err != nil {
 		klog.ErrorS(err, "LoggingConfiguration is invalid")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
