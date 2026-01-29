@@ -541,6 +541,24 @@ func (ctrl *csiSnapshotCommonController) isGroupSnapshotContentReadyForSnapshotC
 		return false
 	}
 
+	// Check that all individual snapshot handles and volume handles are populated.
+	// This prevents race conditions where the CSI driver hasn't yet populated
+	// all the required fields for all volumes in the group.
+	for _, snapshotInfo := range groupSnapshotContent.Status.VolumeSnapshotInfoList {
+		if snapshotInfo.VolumeHandle == "" {
+			klog.V(4).Infof(
+				"isGroupSnapshotContentReadyForSnapshotCreation[%s]: volume handle not yet populated, will retry",
+				groupSnapshotContent.Name)
+			return false
+		}
+		if snapshotInfo.SnapshotHandle == "" {
+			klog.V(4).Infof(
+				"isGroupSnapshotContentReadyForSnapshotCreation[%s]: snapshot handle not yet populated for volume %s, will retry",
+				groupSnapshotContent.Name, snapshotInfo.VolumeHandle)
+			return false
+		}
+	}
+
 	return true
 }
 
@@ -597,7 +615,7 @@ func (ctrl *csiSnapshotCommonController) createIndividualSnapshot(
 
 	// Build the VolumeSnapshotContent and VolumeSnapshot specs
 	volumeSnapshotContent := ctrl.buildVolumeSnapshotContentSpec(
-		groupSnapshot, groupSnapshotContent, volumeHandle, pv, groupSnapshotSecret)
+		groupSnapshot, groupSnapshotContent, snapshotInfo, pv, groupSnapshotSecret)
 	volumeSnapshot := ctrl.buildVolumeSnapshotSpec(
 		groupSnapshot, groupSnapshotContent, volumeHandle, pv)
 
@@ -639,16 +657,20 @@ func (ctrl *csiSnapshotCommonController) createIndividualSnapshot(
 func (ctrl *csiSnapshotCommonController) buildVolumeSnapshotContentSpec(
 	groupSnapshot *crdv1beta2.VolumeGroupSnapshot,
 	groupSnapshotContent *crdv1beta2.VolumeGroupSnapshotContent,
-	volumeHandle string,
+	snapshotInfo crdv1beta2.VolumeSnapshotInfo,
 	pv *v1.PersistentVolume,
 	groupSnapshotSecret *v1.SecretReference,
 ) *crdv1.VolumeSnapshotContent {
+	volumeHandle := snapshotInfo.VolumeHandle
 	volumeSnapshotContentName := getSnapshotContentNameForVolumeGroupSnapshotContent(
 		string(groupSnapshot.UID), volumeHandle)
 	volumeSnapshotName := getSnapshotNameForVolumeGroupSnapshotContent(
 		string(groupSnapshot.UID), volumeHandle)
 	volumeSnapshotNamespace := groupSnapshotContent.Spec.VolumeGroupSnapshotRef.Namespace
 
+	// These are pre-provisioned snapshots that already exist as part of the group snapshot,
+	// so we use SnapshotHandle in the Source, not VolumeHandle.
+	snapshotHandle := snapshotInfo.SnapshotHandle
 	volumeSnapshotContent := &crdv1.VolumeSnapshotContent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: volumeSnapshotContentName,
@@ -665,7 +687,7 @@ func (ctrl *csiSnapshotCommonController) buildVolumeSnapshotContentSpec(
 			DeletionPolicy: groupSnapshotContent.Spec.DeletionPolicy,
 			Driver:         groupSnapshotContent.Spec.Driver,
 			Source: crdv1.VolumeSnapshotContentSource{
-				VolumeHandle: &volumeHandle,
+				SnapshotHandle: &snapshotHandle,
 			},
 		},
 	}
