@@ -680,6 +680,15 @@ func GetDynamicSnapshotContentNameForGroupSnapshot(groupSnapshot *crdv1beta1.Vol
 // If the VolumeSnapshotContent object still contains other changes after this sanitization, the changes
 // are potentially meaningful and the object is enqueued to be considered for syncing
 func ShouldEnqueueContentChange(old *crdv1.VolumeSnapshotContent, new *crdv1.VolumeSnapshotContent) bool {
+	// Always enqueue VSC that just changed to "readyToUse".
+	// This will process any deletionTimestamp on the VSC that was added while the snapshot was being created.
+	// See https://github.com/kubernetes-csi/external-snapshotter/issues/1388
+	oldReadyToUse := old.Status != nil && old.Status.ReadyToUse != nil && *old.Status.ReadyToUse
+	newReadyToUse := new.Status != nil && new.Status.ReadyToUse != nil && *new.Status.ReadyToUse
+	if !oldReadyToUse && newReadyToUse {
+		return true
+	}
+
 	sanitized := new.DeepCopy()
 	// ResourceVersion always changes between revisions
 	sanitized.ResourceVersion = old.ResourceVersion
