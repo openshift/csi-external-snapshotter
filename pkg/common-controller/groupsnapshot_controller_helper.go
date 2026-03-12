@@ -518,7 +518,7 @@ func (ctrl *csiSnapshotCommonController) createSnapshotsForGroupSnapshotContent(
 
 	// Create individual snapshots for each volume in the group
 	for _, snapshotInfo := range groupSnapshotContent.Status.VolumeSnapshotInfoList {
-		if err := ctrl.createIndividualSnapshot(ctx, snapshotInfo, groupSnapshotContent, groupSnapshot, groupSnapshotSecret); err != nil {
+		if err := ctrl.createIndividualSnapshotForGroupSnapshot(ctx, snapshotInfo, groupSnapshotContent, groupSnapshot, groupSnapshotSecret); err != nil {
 			return groupSnapshotContent, err
 		}
 	}
@@ -574,9 +574,10 @@ func (ctrl *csiSnapshotCommonController) getGroupSnapshotSecret(
 	return groupSnapshotSecret, nil
 }
 
-// createIndividualSnapshot creates a VolumeSnapshot and VolumeSnapshotContent for a single
-// snapshot within a group snapshot.
-func (ctrl *csiSnapshotCommonController) createIndividualSnapshot(
+// createIndividualSnapshotForGroupSnapshot creates a VolumeSnapshot and VolumeSnapshotContent for a single
+// snapshot within a group snapshot. This handles the full lifecycle: building specs, creating resources,
+// and binding them together.
+func (ctrl *csiSnapshotCommonController) createIndividualSnapshotForGroupSnapshot(
 	ctx context.Context,
 	snapshotInfo crdv1beta2.VolumeSnapshotInfo,
 	groupSnapshotContent *crdv1beta2.VolumeGroupSnapshotContent,
@@ -589,54 +590,54 @@ func (ctrl *csiSnapshotCommonController) createIndividualSnapshot(
 	pv, err := ctrl.findPersistentVolumeByCSIDriverHandle(groupSnapshotContent.Spec.Driver, volumeHandle)
 	if err != nil {
 		klog.Errorf(
-			"createIndividualSnapshot: error while finding PV for volumeHandle:[%s] and CSI driver:[%s]: %s",
+			"createIndividualSnapshotForGroupSnapshot: error while finding PV for volumeHandle:[%s] and CSI driver:[%s]: %s",
 			volumeHandle,
 			groupSnapshotContent.Spec.Driver,
 			err)
 	}
 
 	// Build the VolumeSnapshotContent and VolumeSnapshot specs
-	volumeSnapshotContent := ctrl.buildVolumeSnapshotContentSpec(
+	volumeSnapshotContent := ctrl.buildVolumeSnapshotContentSpecForGroupSnapshot(
 		groupSnapshot, groupSnapshotContent, volumeHandle, pv, groupSnapshotSecret)
-	volumeSnapshot := ctrl.buildVolumeSnapshotSpec(
+	volumeSnapshot := ctrl.buildVolumeSnapshotSpecForGroupSnapshot(
 		groupSnapshot, groupSnapshotContent, volumeHandle, pv)
 
 	// Create the VolumeSnapshotContent and get the created object from the API
 	createdVolumeSnapshotContent, err := ctrl.createOrGetVolumeSnapshotContent(ctx, volumeSnapshotContent)
 	if err != nil {
-		return fmt.Errorf("createIndividualSnapshot: creating volumesnapshotcontent %w", err)
+		return fmt.Errorf("createIndividualSnapshotForGroupSnapshot: creating volumesnapshotcontent %w", err)
 	}
 
 	// Create the VolumeSnapshot and get the created object from the API
 	createdVolumeSnapshot, err := ctrl.createOrGetVolumeSnapshot(ctx, volumeSnapshot)
 	if err != nil {
-		return fmt.Errorf("createIndividualSnapshot: error creating or fetching volumesnapshot %w", err)
+		return fmt.Errorf("createIndividualSnapshotForGroupSnapshot: error creating or fetching volumesnapshot %w", err)
 	}
 
 	if createdVolumeSnapshot.GetUID() == "" {
 		return fmt.Errorf(
-			"createIndividualSnapshot: created snapshot %s has an empty UID", createdVolumeSnapshot.Name)
+			"createIndividualSnapshotForGroupSnapshot: created snapshot %s has an empty UID", createdVolumeSnapshot.Name)
 	}
 
 	// Bind the resources together using the CREATED objects from the API
 	if err := ctrl.bindSnapshotContentToSnapshot(createdVolumeSnapshotContent, createdVolumeSnapshot); err != nil {
-		return fmt.Errorf("createIndividualSnapshot: binding volumesnapshotcontent to volumesnapshot %w", err)
+		return fmt.Errorf("createIndividualSnapshotForGroupSnapshot: binding volumesnapshotcontent to volumesnapshot %w", err)
 	}
 
 	if err := ctrl.bindSnapshotToSnapshotContent(createdVolumeSnapshot, createdVolumeSnapshotContent.Name); err != nil {
-		return fmt.Errorf("createIndividualSnapshot: binding volumesnapshot to volumesnapshotcontent %w", err)
+		return fmt.Errorf("createIndividualSnapshotForGroupSnapshot: binding volumesnapshot to volumesnapshotcontent %w", err)
 	}
 
 	// Update the VolumeSnapshotContent status
 	if err := ctrl.updateVolumeSnapshotContentStatus(createdVolumeSnapshotContent, snapshotInfo, groupSnapshotContent); err != nil {
-		return fmt.Errorf("createIndividualSnapshot: setting snapshotHandle in volumesnapshotcontent %w", err)
+		return fmt.Errorf("createIndividualSnapshotForGroupSnapshot: setting snapshotHandle in volumesnapshotcontent %w", err)
 	}
 
 	return nil
 }
 
-// buildVolumeSnapshotContentSpec constructs a VolumeSnapshotContent spec for an individual snapshot.
-func (ctrl *csiSnapshotCommonController) buildVolumeSnapshotContentSpec(
+// buildVolumeSnapshotContentSpecForGroupSnapshot constructs a VolumeSnapshotContent spec for an individual snapshot within a group snapshot.
+func (ctrl *csiSnapshotCommonController) buildVolumeSnapshotContentSpecForGroupSnapshot(
 	groupSnapshot *crdv1beta2.VolumeGroupSnapshot,
 	groupSnapshotContent *crdv1beta2.VolumeGroupSnapshotContent,
 	volumeHandle string,
@@ -675,11 +676,11 @@ func (ctrl *csiSnapshotCommonController) buildVolumeSnapshotContentSpec(
 	}
 
 	if groupSnapshotSecret != nil {
-		klog.V(5).Infof("buildVolumeSnapshotContentSpec: set annotation [%s] on volume snapshot content [%s].",
+		klog.V(5).Infof("buildVolumeSnapshotContentSpecForGroupSnapshot: set annotation [%s] on volume snapshot content [%s].",
 			utils.AnnDeletionSecretRefName, volumeSnapshotContent.Name)
 		metav1.SetMetaDataAnnotation(&volumeSnapshotContent.ObjectMeta, utils.AnnDeletionSecretRefName, groupSnapshotSecret.Name)
 
-		klog.V(5).Infof("buildVolumeSnapshotContentSpec: set annotation [%s] on volume snapshot content [%s].",
+		klog.V(5).Infof("buildVolumeSnapshotContentSpecForGroupSnapshot: set annotation [%s] on volume snapshot content [%s].",
 			utils.AnnDeletionSecretRefNamespace, volumeSnapshotContent.Name)
 		metav1.SetMetaDataAnnotation(&volumeSnapshotContent.ObjectMeta, utils.AnnDeletionSecretRefNamespace, groupSnapshotSecret.Namespace)
 	}
@@ -687,8 +688,8 @@ func (ctrl *csiSnapshotCommonController) buildVolumeSnapshotContentSpec(
 	return volumeSnapshotContent
 }
 
-// buildVolumeSnapshotSpec constructs a VolumeSnapshot spec for an individual snapshot.
-func (ctrl *csiSnapshotCommonController) buildVolumeSnapshotSpec(
+// buildVolumeSnapshotSpecForGroupSnapshot constructs a VolumeSnapshot spec for an individual snapshot within a group snapshot.
+func (ctrl *csiSnapshotCommonController) buildVolumeSnapshotSpecForGroupSnapshot(
 	groupSnapshot *crdv1beta2.VolumeGroupSnapshot,
 	groupSnapshotContent *crdv1beta2.VolumeGroupSnapshotContent,
 	volumeHandle string,
