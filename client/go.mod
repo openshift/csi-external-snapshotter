@@ -56,3 +56,5 @@ require (
 )
 
 replace golang.org/x/net => golang.org/x/net v0.24.0
+
+replace google.golang.org/grpc => github.com/openshift-sustaining/grpc-go v1.75.1-sec.1
