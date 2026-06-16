@@ -18,6 +18,11 @@ CMDS=snapshot-controller csi-snapshotter snapshot-conversion-webhook
 all: build
 include release-tools/build.make
 
+# UPSTREAM: <carry>: disable test-subtree
+.PHONY: test-subtree
+test-subtree:
+	@ echo "### $@: skipped"
+
 # The test-vendor-client target performs vendor checks in both
 # the external-snapshotter module and the client module.
 # This target has been added for the following reasons:
