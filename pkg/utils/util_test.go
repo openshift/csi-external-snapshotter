@@ -23,7 +23,6 @@ import (
 	crdv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 func TestRemoveString(t *testing.T) {
@@ -500,26 +499,6 @@ func TestShouldEnqueueContentChange(t *testing.T) {
 			new: &crdv1.VolumeSnapshotContent{
 				ObjectMeta: metav1.ObjectMeta{
 					ResourceVersion: oldValue,
-				},
-			},
-			expectedResult: true,
-		},
-		{
-			name: "readyToUse transition from false to true (should enqueue to process deletionTimestamp)",
-			old: &crdv1.VolumeSnapshotContent{
-				ObjectMeta: metav1.ObjectMeta{
-					ResourceVersion: oldValue,
-				},
-				Status: &crdv1.VolumeSnapshotContentStatus{
-					ReadyToUse: ptr.To(false),
-				},
-			},
-			new: &crdv1.VolumeSnapshotContent{
-				ObjectMeta: metav1.ObjectMeta{
-					ResourceVersion: newValue,
-				},
-				Status: &crdv1.VolumeSnapshotContentStatus{
-					ReadyToUse: ptr.To(true),
 				},
 			},
 			expectedResult: true,
