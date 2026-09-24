@@ -1,8 +1,8 @@
 module github.com/kubernetes-csi/external-snapshotter/client/v8
 
-go 1.22.0
+go 1.23.0
 
-toolchain go1.22.3
+toolchain go1.23.12
 
 require (
 	k8s.io/api v0.30.0
@@ -33,14 +33,15 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	golang.org/x/mod v0.15.0 // indirect
-	golang.org/x/net v0.23.0 // indirect
+	golang.org/x/mod v0.26.0 // indirect
+	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/oauth2 v0.10.0 // indirect
-	golang.org/x/sys v0.19.0 // indirect
-	golang.org/x/term v0.19.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/sync v0.16.0 // indirect
+	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/term v0.34.0 // indirect
+	golang.org/x/text v0.28.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
-	golang.org/x/tools v0.18.0 // indirect
+	golang.org/x/tools v0.35.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
@@ -55,6 +56,6 @@ require (
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
-replace golang.org/x/net => golang.org/x/net v0.24.0
+replace golang.org/x/net => github.com/openshift-sustaining/net v0.43.0-sec.4
 
 replace google.golang.org/grpc => github.com/openshift-sustaining/grpc-go v1.75.1-sec.1
