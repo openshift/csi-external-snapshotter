@@ -128,4 +128,4 @@ replace k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.26.0
 
 replace k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.26.0
 
-replace golang.org/x/net => github.com/openshift-sustaining/net v0.35.0-sec.3
+replace golang.org/x/net => github.com/openshift-sustaining/net v0.35.0-sec.4
