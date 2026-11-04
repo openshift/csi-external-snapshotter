@@ -103,4 +103,4 @@ replace (
 	k8s.io/sample-controller => k8s.io/sample-controller v0.25.2
 )
 
-replace golang.org/x/net => github.com/openshift-sustaining/net v0.35.0-sec.3
+replace golang.org/x/net => github.com/openshift-sustaining/net v0.35.0-sec.4
